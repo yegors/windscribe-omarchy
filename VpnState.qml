@@ -4,14 +4,13 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import "Model.js" as Model
-import "Geo.js" as Geo
 
 // Windscribe state for the bar widget, driven entirely by windscribe-cli.
 //
-// The CLI allows one instance at a time, so every call is serialized: reads
-// defer politely, actions kill an in-flight read and take the slot. Connect
-// and disconnect run blocking — the exit code and output are the truth about
-// what happened — while `pendingLabel` keeps the UI honest in the meantime.
+// The CLI allows one instance at a time, so every call is serialized. Actions
+// ask in-flight readers to stop and wait for their exit before taking the
+// slot. Connect and disconnect stay blocking — exit status remains the truth
+// while `pendingLabel` keeps the UI responsive.
 //
 // Traffic comes from the kernel's own counters for the tunnel interface,
 // found via `ip route get` so the device name never needs to be known.
@@ -20,20 +19,25 @@ Item {
 
   // Injected by BarWidget from the shell's per-widget settings (shell.json).
   property var settings: ({})
-  // Set by the panel; drives faster polling and traffic sampling.
+  // Aggregated across per-monitor panel instances; drives faster polling and
+  // traffic sampling while at least one panel is open.
   property bool panelOpen: false
+  property int _nextPanelOwnerId: 0
+  property var _openPanelOwners: ({})
 
   property bool installed: false
   property bool installing: false
+  property bool updating: false
+  property bool signingIn: false
   // Official Arch CLI is x86_64 only. Anything else (aarch64, armv7, i686)
   // has no package to download — we refuse to try rather than fail in pacman.
   property string machine: ""
   property bool archProbed: false
   readonly property bool installSupported: archProbed
     && (machine === "x86_64" || machine === "amd64")
-  // The CLI-only build ships a systemd user unit the GUI build does not.
-  // Only the CLI-only build prints `windscribe-cli locations` to stdout —
-  // the GUI build opens the location list in the app window instead.
+  // The headless package ships a service marker and prints locations to
+  // stdout. Other installations may route that command to another surface,
+  // so the plugin falls back to direct location entry.
   property bool cliOnlyBuild: false
   property bool buildProbed: false
 
@@ -53,6 +57,8 @@ Item {
   property var locations: []
   property bool locationsLoaded: false
   property bool locationsUnavailable: false
+  property var availablePorts: []
+  property string portsProtocol: ""
 
   property string lastError: ""
   property string actionStatus: ""
@@ -80,19 +86,39 @@ Item {
   property var recents: []
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/omarchy-windscribe"
   readonly property string statePath: stateDir + "/state.json"
+  property string signInResultPath: ""
+  property string updateResultPath: ""
 
   property string _statusOutput: ""
   property string _statusError: ""
   property string _locationsOutput: ""
+  property string _portsOutput: ""
   property string _actionOutput: ""
   property string _actionError: ""
+  property string _signInResultOutput: ""
+  property string _updateResultOutput: ""
   property bool _statusAborted: false
   property bool _locationsAborted: false
+  property bool _portsAborted: false
   property bool _actionAborted: false
+  property bool _actionQueued: false
+  property var _queuedActionCommand: []
+  property string _queuedActionKind: ""
+  property string _queuedActionLabel: ""
+  property bool _retryLocationsAfterAction: false
+  property bool _retryPortsAfterAction: false
   property bool _statusInitialized: false
   property bool _expectDown: false
   property string _actionKind: ""
   property var _target: null
+  property string _requestedPortsProtocol: ""
+  property string _portsInFlightProtocol: ""
+  property bool _updatePending: false
+  property bool _signInPending: false
+  property bool _signInLauncherExited: false
+  property bool _updateLauncherExited: false
+  property int _signInFallbackSuccesses: 0
+  property int _updateFallbackSuccesses: 0
 
   readonly property bool loggedIn: loginState === "Logged in"
   readonly property bool loggedOut: loginState === "Logged out"
@@ -104,48 +130,80 @@ Item {
   readonly property bool active: desiredState === -1
     ? backendActive
     : desiredState === 1
-  readonly property bool busy: actionProcess.running || transitional
+  readonly property bool busy: updating || signingIn || _updatePending || _signInPending || _actionQueued
+    || actionProcess.running || signInFallbackProcess.running
+    || updateFallbackProcess.running || transitional
   readonly property bool loadingLocations: locationsProcess.running
+  readonly property bool loadingPorts: portsProcess.running
   readonly property bool firewallLocked: firewall === "Always On"
   readonly property bool firewallOn: firewall === "On" || firewallLocked
   readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 5, 2, 60)
-  readonly property bool notificationsOn: String(setting("notifications", "on")) !== "off"
+  readonly property bool notificationsOn: {
+    var value = setting("notifications", true)
+    return value !== false && String(value) !== "off"
+  }
   readonly property var usage: Model.parseDataUsage(dataUsage)
-  // {city, lat, lon} for the connected city, when its coordinates are known.
-  readonly property var currentPlace: {
-    if (city === "") return null
-    var hit = Geo.locate(city)
-    return hit ? { city: city, lat: hit[0], lon: hit[1] } : null
+
+  onPanelOpenChanged: {
+    trafficReset()
+    if (panelOpen && connected) {
+      _connectedSinceMs = Date.now()
+      if (linkDevice === "") routeProbe()
+    }
   }
 
   readonly property string statusText: {
     if (!installed) {
       if (installing) return "Installing Windscribe…"
       if (!archProbed) return "Checking system…"
-      if (archProbed && !installSupported) return "Unsupported on this CPU"
-      return "Windscribe not installed"
+      if (archProbed && !installSupported) return "Windscribe CLI unavailable"
+      return "Setup required"
     }
-    if (actionProcess.running && pendingLabel !== "") return pendingLabel
-    if (internet === "unavailable") return "No internet"
+    if (updating || _updatePending) return "Updating Windscribe…"
+    if (signingIn || _signInPending) return "Signing in…"
+    if ((actionProcess.running || _actionQueued) && pendingLabel !== "") return pendingLabel
+    if (internet === "unavailable") return "No internet connection"
     if (loginState === "Logging in") return "Logging in…"
     if (loggedOut) return "Not signed in"
     if (loginState.indexOf("Error") === 0) return "Login error"
     if (desiredState === 1 && !connected) return "Connecting…"
     if (desiredState === 0 && connectionState !== "Disconnected") return "Disconnecting…"
     if (connectionState === "Connected") {
-      if (networkInterference) return "Connected · network interference"
-      if (tunnelTestPending) return "Connected · verifying…"
+      if (networkInterference) return "Tunnel check failed"
+      if (tunnelTestPending) return "Verifying tunnel…"
       return "Connected"
     }
     if (connectionState === "Connecting") return "Connecting…"
     if (connectionState === "Disconnecting") return "Disconnecting…"
-    if (connectionState === "Disconnected") return "Disconnected"
+    if (connectionState === "Disconnected") return "Ready to connect"
     if (connectionState === "Error") return "Connection error"
-    return "Checking…"
+    return "Checking status…"
   }
 
   function markupSafeText(raw) {
     return Model.markupSafe(raw)
+  }
+
+  function registerPanelOwner() {
+    _nextPanelOwnerId += 1
+    return _nextPanelOwnerId
+  }
+
+  function setPanelOwnerOpen(ownerId, open) {
+    if (!ownerId) return
+    var next = ({})
+    var count = 0
+    for (var key in _openPanelOwners) {
+      if (String(key) === String(ownerId)) continue
+      next[key] = true
+      count += 1
+    }
+    if (open) {
+      next[String(ownerId)] = true
+      count += 1
+    }
+    _openPanelOwners = next
+    panelOpen = count > 0
   }
 
   function isSafeLocation(value) {
@@ -167,8 +225,18 @@ Item {
     return Model.normalizeProtocol(setting("preferredProtocol", ""))
   }
 
+  function readersFree() {
+    return !statusProcess.running && !locationsProcess.running && !portsProcess.running
+      && !signInFallbackProcess.running && !updateFallbackProcess.running
+  }
+
+  function localCliFree() {
+    return readersFree() && !actionProcess.running && !_actionQueued
+      && !_updatePending && !_signInPending
+  }
+
   function cliFree() {
-    return !statusProcess.running && !locationsProcess.running && !actionProcess.running
+    return localCliFree() && !updating && !signingIn
   }
 
   function refresh() {
@@ -203,12 +271,29 @@ Item {
     locationsWatchdog.restart()
   }
 
-  // On GUI builds the location list only exists in the app window; this pops
-  // it open there. Routed through the action process so it serializes with
-  // other CLI calls and surfaces failures.
-  function openLocationsInApp() {
-    if (!installed || cliOnlyBuild || actionProcess.running) return
-    runAction(["windscribe-cli", "locations"], "locations", "")
+  function refreshPorts(value) {
+    var requested = Model.protocolBase(value)
+    _requestedPortsProtocol = requested
+    if (!installed || !loggedIn || requested === "") {
+      availablePorts = []
+      portsProtocol = ""
+      return
+    }
+    if (portsProcess.running) {
+      // Let the in-flight read finish. Its result is tagged with the protocol
+      // that launched it and discarded if the user has since chosen another.
+      return
+    }
+    if (!cliFree()) {
+      portsRetry.restart()
+      return
+    }
+    _portsAborted = false
+    _portsOutput = ""
+    _portsInFlightProtocol = requested
+    portsProcess.command = ["windscribe-cli", "ports", requested]
+    portsProcess.running = true
+    portsWatchdog.restart()
   }
 
   function applyStatus(raw) {
@@ -238,6 +323,7 @@ Item {
       }
       if (linkDevice === "") routeProbe()
     } else {
+      if (wasConnected) trafficReset()
       linkDevice = ""
       // A tunnel we didn't ask to close is the one thing a person must hear
       // about: the icon dimming is not a signal most people read.
@@ -245,7 +331,7 @@ Item {
         if (!_expectDown && !actionProcess.running) {
           notify("Windscribe disconnected",
                  firewallOn
-                   ? "The kill switch is blocking all traffic until you reconnect."
+                   ? "The Firewall is blocking traffic until you reconnect."
                    : "Traffic is no longer going through the VPN.",
                  "critical")
         }
@@ -261,10 +347,15 @@ Item {
       desiredState = -1
       desiredTimeout.stop()
     }
+
+    var preferredBase = Model.protocolBase(protocolPreference())
+    if (panelOpen && loggedIn && preferredBase !== ""
+        && portsProtocol !== preferredBase && !portsProcess.running)
+      portsRetry.restart()
   }
 
   function toggle() {
-    if (!installed || actionProcess.running) return
+    if (!installed || busy) return
     if (active) disconnect()
     else connect()
   }
@@ -278,7 +369,7 @@ Item {
   }
 
   function connect() {
-    if (!installed || actionProcess.running) return
+    if (!installed || busy) return
     desiredState = 1
     _expectDown = false
     _target = null
@@ -286,15 +377,15 @@ Item {
   }
 
   function connectBest() {
-    if (!installed || actionProcess.running) return
+    if (!installed || busy) return
     desiredState = 1
     _expectDown = false
     _target = null
-    runAction(connectCommand("best"), "connect", "Connecting to fastest…")
+    runAction(connectCommand("best"), "connect", "Connecting to Best Location…")
   }
 
   function connectTo(location) {
-    if (!installed || actionProcess.running) return
+    if (!installed || busy) return
     var target = String(location || "").trim()
     if (!Model.isSafeLocation(target)) {
       lastError = "Invalid Windscribe location"
@@ -314,41 +405,92 @@ Item {
   }
 
   function disconnect() {
-    if (!installed || actionProcess.running) return
+    if (!installed || busy) return
     desiredState = 0
     _expectDown = true
     runAction(["windscribe-cli", "disconnect"], "disconnect", "Disconnecting…")
   }
 
   function setFirewall(on) {
-    if (!installed || actionProcess.running || firewallLocked) return
+    if (!installed || busy || firewallLocked) return
     runAction(["windscribe-cli", "firewall", on ? "on" : "off"], "firewall", "")
   }
 
   // New IP on the same server (needs a plan that allows it; errors surface).
   function rotateIp() {
-    if (!installed || actionProcess.running || !connected) return
+    if (!installed || busy || !connected) return
     runAction(["windscribe-cli", "ip", "rotate"], "rotate", "Rotating IP…")
   }
 
   function signOut() {
-    if (!installed || actionProcess.running) return
+    if (!installed || busy) return
     desiredState = 0
     _expectDown = true
-    runAction(["windscribe-cli", "logout"], "logout", "Signing out…")
+    runAction(["windscribe-cli", "logout", firewallOn ? "on" : "off"], "logout", "Signing out…")
   }
 
   // Sign-in is interactive (username, password, 2FA, on the CLI-only build a
   // captcha), so it happens in Omarchy's floating terminal. The command is a
-  // fixed literal — nothing user-typed crosses a shell boundary. While the
-  // terminal owns the CLI's single instance, our polls skip politely.
-  function signIn() {
-    if (!installed) return
-    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", "windscribe-cli login"])
+  // fixed literal — nothing user-typed crosses a shell boundary. A private
+  // result marker tells the panel exactly when the CLI has released its slot.
+  function terminalCommandWithResult(command, resultPath) {
+    var marker = Model.shellQuote(resultPath)
+    return "result=" + marker
+      + "; rm -f \"$result\"; code=1"
+      + "; trap 'printf \"%s\" \"$code\" > \"$result\"' EXIT"
+      + "; " + command + "; code=$?; exit \"$code\""
+  }
+
+  function operationResultPath(kind) {
+    return stateDir + "/" + kind + "-" + Date.now() + "-"
+      + Math.floor(Math.random() * 1000000000) + ".result"
+  }
+
+  function startSignIn() {
+    if (!_signInPending) return
+    if (!readersSettled() || actionProcess.running || _actionQueued) {
+      signInQueueTimer.restart()
+      return
+    }
+    _signInPending = false
+    signingIn = true
+    _signInResultOutput = ""
+    _signInLauncherExited = false
+    _signInFallbackSuccesses = 0
+    signInResultPath = operationResultPath("signin")
+    signInLaunchProcess.command = [
+      "omarchy-launch-floating-terminal-with-presentation",
+      terminalCommandWithResult("windscribe-cli login", signInResultPath)
+    ]
+    signInLaunchProcess.running = true
     signInWatch.restart()
   }
 
-  // Official CLI-only package from windscribe.com, not the AUR GUI wrapper.
+  function signIn() {
+    if (!installed || busy) return
+    lastError = ""
+    _signInPending = true
+    startSignIn()
+  }
+
+  function finishSignIn(result) {
+    if (!signingIn) return
+    signInWatch.stop()
+    signingIn = false
+    if (signInLaunchProcess.running) signInLaunchProcess.running = false
+    var marker = signInResultPath
+    signInResultPath = ""
+    if (marker !== "") Quickshell.execDetached(["rm", "-f", marker])
+    if (result !== 0) {
+      lastError = "Sign in did not complete"
+      errorClearTimer.restart()
+    } else if (!loggedIn) {
+      loginState = "Logging in"
+    }
+    refresh()
+  }
+
+  // Official command-line package from windscribe.com.
   // A floating terminal owns the sudo prompt; this process never touches
   // privileges. The command is a fixed literal — nothing user-typed crosses
   // a shell boundary. curl writes a real .pkg.tar.zst name because the
@@ -361,6 +503,50 @@ Item {
     Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation",
       "echo 'Installing Windscribe CLI...'; curl -fL -o /tmp/windscribe-cli.pkg.tar.zst https://windscribe.com/install/desktop/linux_zst_x64_cli && sudo pacman -U --noconfirm /tmp/windscribe-cli.pkg.tar.zst && rm -f /tmp/windscribe-cli.pkg.tar.zst"])
     installWatch.restart()
+  }
+
+  // Updates can ask for elevation, so the terminal owns the prompt. The panel
+  // watches status and clears the busy label once the advertised update is gone.
+  function startUpdate() {
+    if (!_updatePending) return
+    if (!readersSettled() || actionProcess.running || _actionQueued) {
+      updateQueueTimer.restart()
+      return
+    }
+    _updatePending = false
+    updating = true
+    _updateResultOutput = ""
+    _updateLauncherExited = false
+    _updateFallbackSuccesses = 0
+    updateResultPath = operationResultPath("update")
+    updateLaunchProcess.command = [
+      "omarchy-launch-floating-terminal-with-presentation",
+      terminalCommandWithResult("windscribe-cli update", updateResultPath)
+    ]
+    updateLaunchProcess.running = true
+    updateWatch.restart()
+  }
+
+  function updateCli() {
+    if (!installed || busy) return
+    lastError = ""
+    _updatePending = true
+    startUpdate()
+  }
+
+  function finishUpdate(result) {
+    if (!updating) return
+    updateWatch.stop()
+    updating = false
+    if (updateLaunchProcess.running) updateLaunchProcess.running = false
+    var marker = updateResultPath
+    updateResultPath = ""
+    if (marker !== "") Quickshell.execDetached(["rm", "-f", marker])
+    if (result !== 0) {
+      lastError = "Update did not complete"
+      errorClearTimer.restart()
+    }
+    refresh()
   }
 
   function notify(summary, body, urgency) {
@@ -403,6 +589,7 @@ Item {
     _lastRx = -1
     _lastTx = -1
     _lastSampleMs = 0
+    _connectedSinceMs = 0
   }
 
   function routeProbe() {
@@ -444,8 +631,40 @@ Item {
     uptimeSec = _connectedSinceMs > 0 ? Math.floor((now - _connectedSinceMs) / 1000) : 0
   }
 
-  // windscribe-cli only allows one instance at a time, so an action takes
-  // priority over any read that happens to be in flight.
+  function readersSettled() {
+    return readersFree() && !_statusAborted && !_locationsAborted && !_portsAborted
+  }
+
+  function startQueuedAction() {
+    if (!_actionQueued) return
+    if (!readersSettled()) {
+      actionQueueTimer.restart()
+      return
+    }
+    _actionKind = _queuedActionKind
+    pendingLabel = _queuedActionLabel
+    actionProcess.command = _queuedActionCommand
+    _actionQueued = false
+    _queuedActionCommand = []
+    _queuedActionKind = ""
+    _queuedActionLabel = ""
+    actionProcess.running = true
+    actionWatchdog.restart()
+  }
+
+  function resumeDeferredReads() {
+    if (_retryLocationsAfterAction) {
+      _retryLocationsAfterAction = false
+      locationsRetry.restart()
+    }
+    if (_retryPortsAfterAction) {
+      _retryPortsAfterAction = false
+      portsRetry.restart()
+    }
+  }
+
+  // Windscribe permits one CLI process. Readers are asked to stop, then the
+  // action waits for their onExited handlers before taking the singleton slot.
   function runAction(command, kind, label) {
     if (statusProcess.running) {
       _statusAborted = true
@@ -454,22 +673,28 @@ Item {
     if (locationsProcess.running) {
       _locationsAborted = true
       locationsProcess.running = false
-      locationsRetry.restart()
+      _retryLocationsAfterAction = true
+    }
+    if (portsProcess.running) {
+      _portsAborted = true
+      portsProcess.running = false
+      _retryPortsAfterAction = true
     }
     lastError = ""
     actionStatus = ""
     errorClearTimer.stop()
     _actionAborted = false
-    _actionKind = kind || ""
     pendingLabel = label || ""
     _actionOutput = ""
     _actionError = ""
-    actionProcess.command = command
-    actionProcess.running = true
-    actionWatchdog.restart()
+    _queuedActionCommand = command
+    _queuedActionKind = kind || ""
+    _queuedActionLabel = label || ""
+    _actionQueued = true
     // desiredTimeout is armed when the action EXITS, not here — a blocking
     // connect may legitimately outlive it, and status can't poll meanwhile.
     desiredTimeout.stop()
+    startQueuedAction()
   }
 
   Component.onCompleted: Quickshell.execDetached(["mkdir", "-p", stateDir])
@@ -530,6 +755,34 @@ Item {
   }
 
   Timer {
+    id: portsRetry
+    interval: 600
+    repeat: false
+    onTriggered: root.refreshPorts(root._requestedPortsProtocol)
+  }
+
+  Timer {
+    id: actionQueueTimer
+    interval: 40
+    repeat: false
+    onTriggered: root.startQueuedAction()
+  }
+
+  Timer {
+    id: updateQueueTimer
+    interval: 80
+    repeat: false
+    onTriggered: root.startUpdate()
+  }
+
+  Timer {
+    id: signInQueueTimer
+    interval: 80
+    repeat: false
+    onTriggered: root.startSignIn()
+  }
+
+  Timer {
     id: statusWatchdog
     interval: 15000
     repeat: false
@@ -552,6 +805,17 @@ Item {
     }
   }
 
+  Timer {
+    id: portsWatchdog
+    interval: 15000
+    repeat: false
+    onTriggered: {
+      if (!portsProcess.running) return
+      root._portsAborted = true
+      portsProcess.running = false
+    }
+  }
+
   // Blocking connects legitimately take a while; this is a backstop, not a
   // deadline.
   Timer {
@@ -566,7 +830,6 @@ Item {
       root.pendingLabel = ""
       root.lastError = "Windscribe did not finish the requested action"
       errorClearTimer.restart()
-      root.refresh()
     }
   }
 
@@ -584,14 +847,21 @@ Item {
   // panel flips to the signed-in view on its own.
   Timer {
     id: signInWatch
-    interval: 3000
+    interval: 1000
     repeat: true
     property int ticks: 0
     onRunningChanged: if (running) ticks = 0
     onTriggered: {
       ticks += 1
-      root.refresh()
-      if (root.loggedIn || ticks > 60) stop()
+      if (signInResultProcess.running) return
+      root._signInResultOutput = ""
+      signInResultProcess.command = ["cat", root.signInResultPath]
+      signInResultProcess.running = true
+      if (((root._signInLauncherExited && ticks >= 8) || ticks > 30) && ticks % 3 === 0
+          && !signInFallbackProcess.running) {
+        signInFallbackProcess.command = ["windscribe-cli", "status"]
+        signInFallbackProcess.running = true
+      }
     }
   }
 
@@ -609,6 +879,122 @@ Item {
         stop()
         root.installing = false
       }
+    }
+  }
+
+  Timer {
+    id: updateWatch
+    interval: 1000
+    repeat: true
+    property int ticks: 0
+    onRunningChanged: if (running) ticks = 0
+    onTriggered: {
+      ticks += 1
+      if (updateResultProcess.running) return
+      root._updateResultOutput = ""
+      updateResultProcess.command = ["cat", root.updateResultPath]
+      updateResultProcess.running = true
+      if (((root._updateLauncherExited && ticks >= 8) || ticks > 30) && ticks % 3 === 0
+          && !updateFallbackProcess.running) {
+        updateFallbackProcess.command = ["windscribe-cli", "status"]
+        updateFallbackProcess.running = true
+      }
+    }
+  }
+
+  Process {
+    id: signInLaunchProcess
+    running: false
+    command: []
+    onExited: root._signInLauncherExited = true
+  }
+
+  Process {
+    id: updateLaunchProcess
+    running: false
+    command: []
+    onExited: root._updateLauncherExited = true
+  }
+
+  Process {
+    id: signInFallbackProcess
+    running: false
+    command: []
+    environment: ({ LC_ALL: "C", LANG: "C", LANGUAGE: "en" })
+    stdout: StdioCollector { id: signInFallbackStdout; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (!root.signingIn) {
+        root.refresh()
+        return
+      }
+      if (exitCode !== 0) {
+        root._signInFallbackSuccesses = 0
+        return
+      }
+      root.applyStatus(String(signInFallbackStdout.text || ""))
+      if (root.loggedIn) {
+        root.finishSignIn(0)
+      } else {
+        root._signInFallbackSuccesses += 1
+        if (root._signInFallbackSuccesses >= 2) root.finishSignIn(1)
+      }
+    }
+  }
+
+  Process {
+    id: updateFallbackProcess
+    running: false
+    command: []
+    environment: ({ LC_ALL: "C", LANG: "C", LANGUAGE: "en" })
+    stdout: StdioCollector { id: updateFallbackStdout; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (!root.updating) {
+        root.refresh()
+        return
+      }
+      if (exitCode !== 0) {
+        root._updateFallbackSuccesses = 0
+        return
+      }
+      root.applyStatus(String(updateFallbackStdout.text || ""))
+      if (root.updateAvailable === "") {
+        root.finishUpdate(0)
+      } else {
+        root._updateFallbackSuccesses += 1
+        if (root._updateFallbackSuccesses >= 2) root.finishUpdate(1)
+      }
+    }
+  }
+
+  Process {
+    id: signInResultProcess
+    running: false
+    command: []
+    stdout: StdioCollector {
+      id: signInResultStdout
+      waitForEnd: true
+      onStreamFinished: root._signInResultOutput = text
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) return
+      var result = parseInt(String(root._signInResultOutput || signInResultStdout.text || "1"), 10)
+      root.finishSignIn(result)
+    }
+  }
+
+  Process {
+    id: updateResultProcess
+    running: false
+    command: []
+    stdout: StdioCollector {
+      id: updateResultStdout
+      waitForEnd: true
+      onStreamFinished: root._updateResultOutput = text
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) return
+      var result = parseInt(String(root._updateResultOutput || updateResultStdout.text || "1"), 10)
+      root.finishUpdate(result)
     }
   }
 
@@ -768,6 +1154,40 @@ Item {
   }
 
   Process {
+    id: portsProcess
+    running: false
+    command: []
+    environment: ({ LC_ALL: "C", LANG: "C", LANGUAGE: "en" })
+    stdout: StdioCollector {
+      id: portsStdout
+      waitForEnd: true
+      onStreamFinished: root._portsOutput = text
+    }
+    onExited: function(exitCode) {
+      portsWatchdog.stop()
+      var completedProtocol = root._portsInFlightProtocol
+      root._portsInFlightProtocol = ""
+      if (root._portsAborted) {
+        root._portsAborted = false
+        if (!root._retryPortsAfterAction && !root._actionQueued && !actionProcess.running)
+          portsRetry.restart()
+        return
+      }
+      if (completedProtocol !== root._requestedPortsProtocol) {
+        portsRetry.restart()
+        return
+      }
+      if (exitCode === 0) {
+        root.availablePorts = Model.parsePorts(root._portsOutput || portsStdout.text || "")
+        root.portsProtocol = completedProtocol
+      } else {
+        root.availablePorts = []
+        root.portsProtocol = ""
+      }
+    }
+  }
+
+  Process {
     id: actionProcess
     running: false
     command: []
@@ -785,6 +1205,11 @@ Item {
       actionWatchdog.stop()
       if (root._actionAborted) {
         root._actionAborted = false
+        root._actionKind = ""
+        root._target = null
+        root.pendingLabel = ""
+        root.resumeDeferredReads()
+        root.refresh()
         return
       }
       var stdout = String(root._actionOutput || actionStdout.text || "")
@@ -817,6 +1242,7 @@ Item {
       }
       settleTimer.ticks = 0
       settleTimer.restart()
+      root.resumeDeferredReads()
     }
   }
 }

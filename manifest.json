@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "com.windscribe.vpn",
   "name": "Windscribe",
-  "version": "0.2.0",
-  "author": "Windscribe",
+  "version": "0.3.0",
+  "author": "Windscribe Limited",
   "license": "MIT",
-  "description": "Windscribe VPN, built for Omarchy: a live world map of every location, one-click connect, kill switch, live tunnel traffic, favorites and recents, protocol picker, and in-panel install and sign-in — all drawn from your theme, all powered by windscribe-cli.",
+  "description": "Windscribe controls for Omarchy: live tunnel telemetry, Best Location, location search, Firewall, protocol and port selection, IP rotation, allowance tracking, and keyboard-first controls.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,14 +14,15 @@
   },
   "barWidget": {
     "displayName": "Windscribe",
-    "description": "Control Windscribe VPN: connect on a world map, switch locations, watch tunnel traffic, and toggle the kill switch from the bar.",
+    "description": "Connect, change locations, inspect tunnel traffic, rotate your IP, and control the Windscribe Firewall from the bar.",
     "category": "Network",
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
       "refreshIntervalSec": 5,
       "preferredProtocol": "",
-      "notifications": "on"
+      "notifications": true,
+      "motion": true
     },
     "schema": [
       {
@@ -37,16 +38,23 @@
       {
         "key": "preferredProtocol",
         "type": "string",
-        "label": "Preferred protocol",
-        "description": "Optional: wireguard, udp, tcp, stealth, or wstunnel (with an optional :port). Applied on the next connect; leave empty for the app default.",
+        "label": "Preferred Protocol",
+        "description": "WireGuard, UDP, TCP, Stealth, or WStunnel, optionally followed by :port. Empty lets Windscribe choose.",
         "defaultValue": ""
       },
       {
         "key": "notifications",
-        "type": "string",
+        "type": "boolean",
         "label": "Desktop notifications",
-        "description": "\"on\" or \"off\". Notifies on connect and on unexpected drops.",
-        "defaultValue": "on"
+        "description": "Alerts on connection and unexpected drops.",
+        "defaultValue": true
+      },
+      {
+        "key": "motion",
+        "type": "boolean",
+        "label": "Interface motion",
+        "description": "Animates tunnel flow and state transitions.",
+        "defaultValue": true
       }
     ]
   }

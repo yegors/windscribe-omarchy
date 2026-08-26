@@ -15,6 +15,10 @@ function elide(text) {
   return value.length > 160 ? value.substring(0, 157) + "…" : value
 }
 
+function shellQuote(value) {
+  return "'" + String(value || "").replace(/'/g, "'\"'\"'") + "'"
+}
+
 // Locations, cities, and nicknames the user may connect to. The CLI is
 // invoked with an argv array (never a shell), so this only guards against
 // nonsense reaching the command line or the UI.
@@ -192,13 +196,74 @@ function normalizeProtocol(value) {
 
 function protocolLabel(value) {
   var labels = {
-    "": "Auto (app default)",
+    "": "Automatic",
     "wireguard": "WireGuard",
-    "udp": "OpenVPN UDP",
-    "tcp": "OpenVPN TCP",
+    "udp": "UDP",
+    "tcp": "TCP",
     "stealth": "Stealth",
     "wstunnel": "WStunnel"
   }
-  var proto = String(value || "").trim().toLowerCase()
-  return labels[proto] !== undefined ? labels[proto] : markupSafe(value)
+  var normalized = normalizeProtocol(value)
+  if (normalized === "") return String(value || "").trim() === "" ? labels[""] : markupSafe(value)
+  var parts = normalized.split(":")
+  return labels[parts[0]] + (parts.length > 1 ? ":" + parts[1] : "")
+}
+
+function protocolBase(value) {
+  var normalized = normalizeProtocol(value)
+  return normalized === "" ? "" : normalized.split(":")[0]
+}
+
+function protocolPort(value) {
+  var normalized = normalizeProtocol(value)
+  if (normalized === "") return ""
+  var parts = normalized.split(":")
+  return parts.length > 1 ? parts[1] : ""
+}
+
+// `windscribe-cli ports <protocol>` returns a comma-separated list.
+function parsePorts(raw) {
+  var tokens = String(raw || "").match(/\d{1,5}/g) || []
+  var out = []
+  var seen = {}
+  for (var i = 0; i < tokens.length; i++) {
+    var port = parseInt(tokens[i], 10)
+    if (port < 1 || port > 65535 || seen[port]) continue
+    seen[port] = true
+    out.push(String(port))
+  }
+  return out
+}
+
+function formatRate(bytesPerSecond) {
+  var value = Math.max(0, Number(bytesPerSecond) || 0)
+  var units = ["B/s", "KB/s", "MB/s", "GB/s"]
+  var unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  var digits = value >= 100 || unit === 0 ? 0 : (value >= 10 ? 1 : 2)
+  return value.toFixed(digits) + " " + units[unit]
+}
+
+function formatBytes(bytes) {
+  var value = Math.max(0, Number(bytes) || 0)
+  var units = ["B", "KB", "MB", "GB", "TB"]
+  var unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  var digits = value >= 100 || unit === 0 ? 0 : (value >= 10 ? 1 : 2)
+  return value.toFixed(digits) + " " + units[unit]
+}
+
+function formatDuration(seconds) {
+  var value = Math.max(0, Math.floor(Number(seconds) || 0))
+  var hours = Math.floor(value / 3600)
+  var minutes = Math.floor((value % 3600) / 60)
+  if (hours > 0) return hours + "h " + (minutes < 10 ? "0" : "") + minutes + "m"
+  if (minutes > 0) return minutes + "m " + (value % 60) + "s"
+  return value + "s"
 }

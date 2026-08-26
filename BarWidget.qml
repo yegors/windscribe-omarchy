@@ -13,6 +13,10 @@ BarWidget {
   readonly property bool popoutSwitchClosing: panelLoader.item
     ? panelLoader.item.popoutSwitchClosing === true
     : false
+  readonly property bool motionOn: {
+    var value = settings ? settings.motion : undefined
+    return value !== false && String(value === undefined ? "on" : value) !== "off"
+  }
 
   function injectPanel() {
     var target = panelLoader.item
@@ -141,7 +145,7 @@ BarWidget {
     tooltipText: WindscribeCore.VpnState.markupSafeText(
       "Windscribe · " + WindscribeCore.VpnState.statusText
         + (WindscribeCore.VpnState.city === "" ? "" : " · " + WindscribeCore.VpnState.city)
-        + (WindscribeCore.VpnState.firewallOn ? " · Kill switch on" : "")
+        + (WindscribeCore.VpnState.firewallOn ? " · Firewall on" : "")
     )
     iconComponent: Component {
       // The pulse animates the wrapper so it never clobbers the state
@@ -160,7 +164,7 @@ BarWidget {
 
         // Breathes while a connect or disconnect is in flight.
         SequentialAnimation on opacity {
-          running: WindscribeCore.VpnState.busy
+          running: root.motionOn && WindscribeCore.VpnState.busy
           loops: Animation.Infinite
           alwaysRunToEnd: true
           NumberAnimation { to: 0.35; duration: 550 }

@@ -118,9 +118,33 @@ test("normalizeProtocol accepts supported protocols and valid ports", () => {
   assert.equal(Model.normalizeProtocol("wireguard:not-a-port"), "")
 })
 
+test("protocol helpers use Windscribe labels and split ports", () => {
+  assert.equal(Model.protocolLabel(""), "Automatic")
+  assert.equal(Model.protocolLabel("wireguard:443"), "WireGuard:443")
+  assert.equal(Model.protocolLabel("udp"), "UDP")
+  assert.equal(Model.protocolBase("stealth:8443"), "stealth")
+  assert.equal(Model.protocolPort("stealth:8443"), "8443")
+  assert.equal(Model.protocolPort("wstunnel"), "")
+})
+
+test("parsePorts accepts Windscribe's list and removes invalid duplicates", () => {
+  assert.deepEqual(
+    Array.from(Model.parsePorts("443, 80, 53, 443, 0, 65536")),
+    ["443", "80", "53"],
+  )
+})
+
+test("traffic formatters stay compact", () => {
+  assert.equal(Model.formatRate(0), "0 B/s")
+  assert.equal(Model.formatRate(1536), "1.50 KB/s")
+  assert.equal(Model.formatBytes(10 * 1024 * 1024), "10.0 MB")
+  assert.equal(Model.formatDuration(3725), "1h 02m")
+})
+
 test("location and label helpers reject unsafe input", () => {
   assert.equal(Model.isSafeLocation("Toronto"), true)
   assert.equal(Model.isSafeLocation("-n"), false)
   assert.equal(Model.isSafeLocation("Toronto; rm -rf /"), false)
   assert.equal(Model.markupSafe("<b>&"), "‹b›＆")
+  assert.equal(Model.shellQuote("a'b"), "'a'\"'\"'b'")
 })
