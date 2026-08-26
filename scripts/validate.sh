@@ -10,3 +10,7 @@ qmllint -I "$OMARCHY_PATH/shell" \
   "$plugin_dir/Traffic.qml" \
   "$plugin_dir/BarWidget.qml" \
   "$plugin_dir/Panel.qml"
+
+if command -v node >/dev/null 2>&1; then
+  node --test "$plugin_dir/tests/model.test.js"
+fi

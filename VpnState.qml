@@ -25,6 +25,12 @@ Item {
 
   property bool installed: false
   property bool installing: false
+  // Official Arch CLI is x86_64 only. Anything else (aarch64, armv7, i686)
+  // has no package to download — we refuse to try rather than fail in pacman.
+  property string machine: ""
+  property bool archProbed: false
+  readonly property bool installSupported: archProbed
+    && (machine === "x86_64" || machine === "amd64")
   // The CLI-only build ships a systemd user unit the GUI build does not.
   // Only the CLI-only build prints `windscribe-cli locations` to stdout —
   // the GUI build opens the location list in the app window instead.
@@ -113,7 +119,12 @@ Item {
   }
 
   readonly property string statusText: {
-    if (!installed) return installing ? "Installing Windscribe…" : "Windscribe not installed"
+    if (!installed) {
+      if (installing) return "Installing Windscribe…"
+      if (!archProbed) return "Checking system…"
+      if (archProbed && !installSupported) return "Unsupported on this CPU"
+      return "Windscribe not installed"
+    }
     if (actionProcess.running && pendingLabel !== "") return pendingLabel
     if (internet === "unavailable") return "No internet"
     if (loginState === "Logging in") return "Logging in…"
@@ -337,14 +348,18 @@ Item {
     signInWatch.restart()
   }
 
-  // Omarchy's own installer flow: a floating terminal owns the password
-  // prompt, so the shell process never touches privileges. windscribe-v2-bin
-  // repackages the official release from GitHub.
+  // Official CLI-only package from windscribe.com, not the AUR GUI wrapper.
+  // A floating terminal owns the sudo prompt; this process never touches
+  // privileges. The command is a fixed literal — nothing user-typed crosses
+  // a shell boundary. curl writes a real .pkg.tar.zst name because the
+  // download URL is a redirector (`linux_zst_x64_cli`) that pacman -U would
+  // refuse as a filename.
   function installCli() {
-    if (installed || installing) return
+    if (installed || installing || !installSupported) return
     installing = true
     lastError = ""
-    Quickshell.execDetached(["omarchy-install-app", "Windscribe", "windscribe-v2-bin"])
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation",
+      "echo 'Installing Windscribe CLI...'; curl -fL -o /tmp/windscribe-cli.pkg.tar.zst https://windscribe.com/install/desktop/linux_zst_x64_cli && sudo pacman -U --noconfirm /tmp/windscribe-cli.pkg.tar.zst && rm -f /tmp/windscribe-cli.pkg.tar.zst"])
     installWatch.restart()
   }
 
@@ -580,7 +595,7 @@ Item {
     }
   }
 
-  // Same idea for the package install: up to five minutes for the AUR build.
+  // Same idea for the package install: up to five minutes for the download.
   Timer {
     id: installWatch
     interval: 3000
@@ -603,6 +618,17 @@ Item {
     printErrors: false
     onLoaded: root.applyState(text())
     onLoadFailed: root.applyState("{}")
+  }
+
+  Process {
+    id: archProcess
+    running: true
+    command: ["uname", "-m"]
+    stdout: StdioCollector { id: archStdout; waitForEnd: true }
+    onExited: function() {
+      root.machine = String(archStdout.text || "").trim()
+      root.archProbed = true
+    }
   }
 
   Process {
@@ -672,6 +698,9 @@ Item {
     id: statusProcess
     running: false
     command: []
+    // Windscribe localizes CLI output to the system language. These two
+    // machine-parsed calls must stay on its stable English output contract.
+    environment: ({ LC_ALL: "C", LANG: "C", LANGUAGE: "en" })
     stdout: StdioCollector {
       id: statusStdout
       waitForEnd: true
@@ -710,6 +739,7 @@ Item {
     id: locationsProcess
     running: false
     command: []
+    environment: ({ LC_ALL: "C", LANG: "C", LANGUAGE: "en" })
     stdout: StdioCollector {
       id: locationsStdout
       waitForEnd: true
@@ -728,6 +758,8 @@ Item {
           root.locationsLoaded = true
           root.locationsUnavailable = false
         } else {
+          root.locations = []
+          root.locationsLoaded = false
           root.locationsUnavailable = true
         }
       }

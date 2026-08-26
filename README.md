@@ -23,8 +23,9 @@ Because it *is* Omarchy, all the way down:
   finds a city, `←`/`→` flip tabs, `Esc` backs out.
 - **It mostly stays out of the terminal.** Install and sign-in each open one
   of Omarchy's own floating terminals (the package install needs your
-  password; sign-in needs your credentials and 2FA) — and both close
-  themselves. Everything else is a click in the panel.
+  password; sign-in needs your credentials and 2FA). When each command
+  finishes, Omarchy shows **Done** and closes the terminal after a keypress.
+  Everything else is a click in the panel.
 - **A map, without a map service.** Every Windscribe city on a world outline,
   the connected one lit and pulsing, hover for the nickname, click to
   connect — all from files inside the plugin. No tiles, no geocoding, no
@@ -41,27 +42,29 @@ owns the session from there.
 
 ## What you need
 
-- Omarchy Quattro
+- Omarchy Quattro on **x86_64** — Windscribe’s Arch CLI has no ARM build, and
+  the panel will say so instead of trying to install
 - A Windscribe account — a free one works; sign up at
   [windscribe.com](https://windscribe.com)
 
-That's it. The panel installs the Windscribe app for you if it isn't there.
+That's it. The panel installs the Windscribe CLI for you if it isn't there.
 
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/Windscribe/omarchy-plugin.git --enable
+omarchy plugin add https://github.com/yegors/windscribe-omarchy.git --enable
 ```
 
 Then click the Windscribe mark in your bar. The panel walks you through the
 rest:
 
-1. **Install Windscribe** — one click; Omarchy opens a terminal and installs
-   [`windscribe-v2-bin`](https://aur.archlinux.org/packages/windscribe-v2-bin)
-   (the official release, repackaged for Arch). The terminal asks for your
-   password, since it's a system package.
+1. **Install Windscribe** — one click; Omarchy opens a terminal, downloads the
+   official [CLI-only Arch package](https://windscribe.com/install/desktop/linux_zst_x64_cli)
+   from windscribe.com, and installs it with `pacman`. The terminal asks for
+   your password, since it's a system package. No AUR, no desktop app — this
+   panel is the wrapper.
 2. **Sign in** — one click; a terminal opens for your username, password, and
-   2FA code, then closes.
+   2FA code. At Omarchy's **Done** prompt, press any key to close it.
 3. **Connect** — the switch at the top, a dot on the map, or a row below.
 
 If you'd rather place the widget yourself, drop `--enable` and run:
@@ -70,27 +73,29 @@ If you'd rather place the widget yourself, drop `--enable` and run:
 omarchy plugin enable com.windscribe.vpn right
 ```
 
-### GUI app or CLI-only build?
+### Already have the desktop app?
 
-Windscribe ships two mutually exclusive Arch packages, and both include
-`windscribe-cli`:
+The two Arch packages are mutually exclusive, and both include
+`windscribe-cli`. This widget installs the **CLI-only** build so the location
+list and map can render in the panel.
 
-- **Desktop app (GUI)** — what the panel's install button sets up. One
-  caveat: on GUI builds, `windscribe-cli locations` opens the list in the app
-  window instead of printing it, so the panel can't render the full location
-  list or the map's full dot field. You still get free-text connect (type a
-  city, press Enter), favorites, recents, the fastest-server row, and a
-  shortcut that opens the app's own location list.
-- **CLI-only build (recommended for this widget)** — headless engine, no GUI,
-  and the full location list renders right in the panel and on the map:
+If you already have the **desktop app (GUI)**, leave it — the widget still
+works. One caveat: `windscribe-cli locations` opens the list in the app
+window instead of printing it, so you get free-text connect, favorites,
+recents, the fastest-server row, and a shortcut that opens the app's own
+list, but not the full map. To switch to the CLI-only build:
 
-  ```bash
-  curl -L -o windscribe-cli.pkg.tar.zst "https://windscribe.com/install/desktop/linux_zst_x64_cli"
-  sudo pacman -U windscribe-cli.pkg.tar.zst
-  ```
+```bash
+sudo pacman -R windscribe
+omarchy restart shell
+```
 
-Everything else works identically on both. The widget detects which build is
-installed and adapts by itself.
+Then click **Install Windscribe** in the panel, or:
+
+```bash
+curl -fL -o windscribe-cli.pkg.tar.zst "https://windscribe.com/install/desktop/linux_zst_x64_cli"
+sudo pacman -U windscribe-cli.pkg.tar.zst
+```
 
 ## Update
 
@@ -251,13 +256,14 @@ This plugin runs unsandboxed inside the Omarchy shell process, like every
 Omarchy plugin. It:
 
 - stores no credentials, tokens, or account data
-- makes no network requests of its own — the map, the coordinates, and the
-  world outline are files in this repo
-- never uses `sudo` — the package install runs through Omarchy's own
-  installer in a terminal that owns the password prompt
-- runs every command as an argument list, never through a shell; the two
-  terminal launches (install and sign-in) pass **fixed literal strings** —
-  nothing user-typed ever crosses a shell boundary
+- makes no network requests of its own during normal use — the map,
+  coordinates, and world outline are bundled; installing the CLI downloads
+  the official package from windscribe.com
+- runs the fixed package installer in Omarchy's floating terminal; that
+  terminal invokes `sudo pacman -U` and owns the password prompt
+- runs direct CLI and system probes as argument lists, not through a shell;
+  install and sign-in use **fixed literal shell strings** in Omarchy's
+  terminal, and nothing user-typed crosses that shell boundary
 - location names echoed into `windscribe-cli connect` are validated against a
   strict character allow-list first, and every string the CLI prints is
   sanitised before it reaches a label

@@ -270,7 +270,7 @@ Panel {
       return
     }
     if (!vpn.installed) {
-      vpn.installCli()
+      if (vpn.installSupported) vpn.installCli()
       return
     }
     if (vpn.loggedOut && !vpn.connected) {
@@ -457,7 +457,23 @@ Panel {
 
           // ── First run: Windscribe isn't there yet ───────────────────────
           Column {
-            visible: !vpn.installed
+            visible: !vpn.installed && !vpn.archProbed
+            width: parent.width
+            spacing: Style.space(8)
+
+            Text {
+              width: parent.width
+              text: "Checking system…"
+              textFormat: Text.PlainText
+              color: root.dimForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.bodySmall
+              horizontalAlignment: Text.AlignHCenter
+            }
+          }
+
+          Column {
+            visible: !vpn.installed && vpn.installSupported
             width: parent.width
             spacing: Style.space(8)
 
@@ -476,7 +492,34 @@ Panel {
 
             Text {
               width: parent.width
-              text: "Installs windscribe-v2-bin, the official release repackaged for Arch. Prefer the CLI-only build (full location list in this panel)? See the README. You'll also need a Windscribe account — a free one works."
+              text: "Installs the official Windscribe CLI from windscribe.com — no desktop app, this panel is the wrapper. You'll also need a Windscribe account — a free one works."
+              textFormat: Text.PlainText
+              color: root.dimForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+          }
+
+          Column {
+            visible: !vpn.installed && vpn.archProbed && !vpn.installSupported
+            width: parent.width
+            spacing: Style.space(8)
+
+            Text {
+              width: parent.width
+              text: "Unsupported on this CPU"
+              textFormat: Text.PlainText
+              color: root.contentForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+              wrapMode: Text.WordWrap
+            }
+
+            Text {
+              width: parent.width
+              text: "Windscribe's Arch CLI is x86_64 only — there is no ARM package, so this panel will not try to install it. If that changes, or if windscribe-cli is already on PATH, the widget will pick it up."
               textFormat: Text.PlainText
               color: root.dimForeground
               font.family: root.contentFontFamily

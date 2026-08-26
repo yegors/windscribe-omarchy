@@ -181,7 +181,13 @@ function parseRoute(raw) {
 // Protocols supported by the Linux client, with an optional ":port" suffix.
 function normalizeProtocol(value) {
   var proto = String(value || "").trim().toLowerCase()
-  return /^(wireguard|udp|tcp|stealth|wstunnel)(:\d{1,5})?$/.test(proto) ? proto : ""
+  var match = proto.match(/^(wireguard|udp|tcp|stealth|wstunnel)(?::(\d{1,5}))?$/)
+  if (!match) return ""
+  if (match[2] !== undefined) {
+    var port = parseInt(match[2], 10)
+    if (port < 1 || port > 65535) return ""
+  }
+  return proto
 }
 
 function protocolLabel(value) {
