@@ -1,0 +1,2 @@
+module com.windscribe.vpn
+singleton VpnState 1.0 VpnState.qml
