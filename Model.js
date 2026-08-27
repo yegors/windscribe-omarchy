@@ -19,6 +19,45 @@ function shellQuote(value) {
   return "'" + String(value || "").replace(/'/g, "'\"'\"'") + "'"
 }
 
+// Create or harden ~/.local/state/omarchy-windscribe. mkdir -p follows a
+// planted symlink and leaves an existing directory's mode alone; this
+// refuses a link at the leaf, creates 0700, and chmod's a leftover 0755.
+function stateDirPrepareCommand(dir) {
+  return "umask 077; dir=" + shellQuote(dir) + "; "
+    + "if [ -L \"$dir\" ]; then echo 'Windscribe state path is a symlink; refusing' >&2; exit 1; fi; "
+    + "if [ -d \"$dir\" ]; then chmod 700 \"$dir\" || exit 1; "
+    + "elif [ -e \"$dir\" ]; then echo 'Windscribe state path is not a directory' >&2; exit 1; "
+    + "else mkdir -p \"$(dirname \"$dir\")\" || exit 1; mkdir -m 700 \"$dir\" || exit 1; fi; "
+    + "if [ -L \"$dir\" ] || [ ! -d \"$dir\" ]; then echo 'Windscribe state path is not a real directory' >&2; exit 1; fi"
+}
+
+// Sign-in/update completion marker. mktemp creates the bytes O_EXCL; GNU
+// mv -T renames over the destination so a planted symlink is replaced
+// rather than followed. The panel polls the final path with cat.
+function terminalCommandWithResult(command, resultPath) {
+  return "result=" + shellQuote(resultPath)
+    + "; umask 077; code=1"
+    + "; trap 'tmp=$(mktemp \"${result}.XXXXXX\") && printf \"%s\" \"$code\" > \"$tmp\" && mv -f -T \"$tmp\" \"$result\"; rm -f -- \"$tmp\"' EXIT"
+    + "; " + command + "; code=$?; exit \"$code\""
+}
+
+// Fixed install recipe for the official Arch CLI package. The download URL is
+// a redirector (`linux_zst_x64_cli`) that pacman -U would refuse as a
+// filename, so curl writes a real .pkg.tar.zst name. That file lives in a
+// private mktemp directory (0700, created O_EXCL) rather than a shared /tmp
+// path: a planted symlink cannot redirect the write, and another user cannot
+// swap the package between download and `pacman -U`.
+function cliInstallCommand() {
+  return "echo 'Installing Windscribe CLI...'; "
+    + "umask 077; "
+    + "dir=$(mktemp -d) && trap 'rm -rf -- \"$dir\"' EXIT && "
+    + "pkg=\"$dir/windscribe-cli.pkg.tar.zst\" && "
+    + "curl -fL --proto '=https' --tlsv1.2 -o \"$pkg\" "
+    + "https://windscribe.com/install/desktop/linux_zst_x64_cli && "
+    + "[ -f \"$pkg\" ] && [ ! -L \"$pkg\" ] && "
+    + "sudo pacman -U --noconfirm \"$pkg\""
+}
+
 // Locations, cities, and nicknames the user may connect to. The CLI is
 // invoked with an argv array (never a shell), so this only guards against
 // nonsense reaching the command line or the UI.

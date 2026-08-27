@@ -1,27 +1,10 @@
 # Windscribe for Omarchy
 
-Windscribe controls that belong in the bar.
+A bar widget for [Windscribe](https://windscribe.com) VPN on Omarchy. Click the badge, pick a city, connect, watch the traffic. Firewall, protocol selection, and IP rotation are in the panel too.
 
-Connect, pick an exit, watch live traffic, rotate your IP, and control the
-Firewall without turning a terminal into permanent desk furniture.
+This is not the official desktop app. I installed Omarchy, wanted the VPN on the bar, and wired the plugin to the official Linux CLI so it talks to the same client you'd run in a terminal.
 
-<img src="preview.png" width="720" alt="Windscribe for Omarchy: the terminal-style connection panel and settings view">
-
-## What it does
-
-- Connects to your last exit or the **fastest location**
-- Searches Windscribe cities, regions, country codes, and datacenter nicknames
-- Keeps **Favourites** and recent destinations at the top of the list
-- Shows live download/upload rates and a traffic wave from the tunnel interface
-- Displays protocol, port, Firewall state, VPN IP, and session transfer
-- Rotates the current VPN IP
-- Controls the Windscribe **Firewall**
-- Selects a preferred protocol and a live, protocol-specific port
-- Reports tunnel verification and network-interference states
-- Supports mouse and keyboard control
-
-Connection controls use the official `windscribe-cli`; live traffic comes
-from the tunnel interface's kernel counters.
+<img src="preview.png" width="840" alt="Windscribe for Omarchy: connection panel and settings">
 
 ## Install
 
@@ -29,77 +12,36 @@ from the tunnel interface's kernel counters.
 omarchy plugin add https://github.com/yegors/windscribe-omarchy.git --enable
 ```
 
-Then open the Windscribe bar widget:
+Open the Windscribe badge on the bar. If the CLI isn't installed yet, the panel will offer to install it (that step asks for sudo in a floating terminal). Then sign in. Username and password go into Windscribe's own prompt, not into this plugin.
 
-1. **install windscribe**
-2. **sign in**
-3. **connect**
+From there: connect, search exits with `/`, star the ones you want at the top. Right click the badge to connect or disconnect without opening the panel. `s` opens settings.
 
-Credentials are entered directly into Windscribe's terminal prompt. The plugin
-does not receive or store them.
+## Updating
 
-## The panel
+```bash
+omarchy plugin update com.windscribe.vpn
+omarchy-restart-shell
+```
 
-The home view is a single column of live fact:
-
-- **Header** — the wordmark, your VPN IP in the accent colour while the
-  tunnel is up (`off` otherwise), and a rotate control
-- **Destination** — the current or next exit with its datacenter nickname
-  and region, plus the live tunnel line: `wg/443 · fw on` when connected,
-  `next: auto · fw off` when not
-- **The button** — one full-width action: `▶ connect` (filled) or
-  `■ disconnect · 4m 12s` (accent outline, with the connection's elapsed
-  time)
-- **down / up / data** — live rates, and cumulative transfer for the
-  current connection
-- **The wave** — forty-four bars of real tunnel activity
-- **Exits** — a numbered list: favourites first (starred `*`), then recents,
-  then every datacenter, with `10g` marking 10 Gbps exits and `pro` in the
-  metadata. `/` searches everything.
-
-The panel never looks up or guesses your physical location, and it shows no
-numbers it cannot measure — which is why there are no per-exit latency
-figures: `windscribe-cli` does not expose them. The fastest location row is
-Windscribe's own latency-based choice.
-
-## Settings
-
-Press `s`. Every row is a real control:
-
-- **firewall** — `[ on ]` / `[ off ]`, via `windscribe-cli firewall`;
-  shows `[ always ]` when Windscribe has locked Always On
-- **preferred protocol** — automatic, wireguard, udp, tcp, stealth, wstunnel
-- **port** — populated live from `windscribe-cli ports` for that protocol
-- **connection alerts** — desktop notifications on connect and unexpected drops
-- **interface motion** — disables decorative animation
-- **appearance** — follows the Omarchy theme; nothing to configure
-- **data allowance** — plan usage as reported by the CLI
-- **rotate ip** — new address, same exit (while connected)
-- **update** — runs the official updater when one is advertised
-- **sign out** — two-step confirm; an enabled Firewall stays enabled
-
-Protocol and port apply on the next connect.
-
-## Bar controls
-
-- Left click: open or close the panel
-- Right click: connect or disconnect
-- Middle click: refresh status and locations
-
-The badge is solid while active, dim while disconnected, and breathes during a
-state change when interface motion is enabled.
+That second command restarts the Omarchy shell. Plugin updates don't always reload in place, so if you pulled a new version and it still looks like the old one, you probably skipped the restart.
 
 ## Keyboard
 
 - `J` / `K` or arrows: move
-- `Enter`: connect / toggle the selected control
+- `Enter`: connect, or toggle the selected control
 - `/`: search exits
-- `F`: toggle a favourite
+- `F`: star or unstar a favourite
 - `S` or `←` / `→`: settings and back
 - `T`: connect or disconnect
 - `W`: toggle Firewall
 - `R`: refresh
 - `Esc`: leave search, close a menu, go back, then close
+
+Middle click the badge to refresh status and locations.
+
+Protocol and port changes apply on the next connect. Sign-out asks for a second confirm, and if the Firewall is on it stays on.
+
+The fastest-location row is Windscribe's own latency pick. This plugin doesn't measure ping per city because the CLI doesn't expose it, and it doesn't guess your physical location.
 
 ## Widget settings
 
@@ -133,11 +75,12 @@ The plugin:
 - stores no credentials, tokens, or account identity
 - makes no location or telemetry requests of its own
 - passes normal commands as argument arrays rather than shell strings
+- downloads the CLI package into a private mktemp directory, not a shared `/tmp` path
 - validates user-entered locations before they reach the CLI
 - renders CLI output as plain, sanitized text
 - reads tunnel byte counters only while the panel is open
 - stores recent location labels plus short-lived sign-in/update result markers
-  under `~/.local/state/omarchy-windscribe/`
+  under a `0700` directory at `~/.local/state/omarchy-windscribe/`
 
 Install, sign-in, and update use Omarchy's floating terminal because those
 commands may need interactive input.
@@ -155,8 +98,7 @@ tests when Node is available.
 
 The Windscribe badge is redrawn from the official
 [Windscribe Desktop App](https://github.com/Windscribe/Desktop-App) asset and
-inherits the active Omarchy theme.
-
+follows the active Omarchy theme.
 
 ## License
 

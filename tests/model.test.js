@@ -161,3 +161,86 @@ test("location and label helpers reject unsafe input", () => {
   assert.equal(Model.markupSafe("<b>&"), "‹b›＆")
   assert.equal(Model.shellQuote("a'b"), "'a'\"'\"'b'")
 })
+
+test("cliInstallCommand writes the package into a private mktemp directory", () => {
+  const cmd = Model.cliInstallCommand()
+  assert.equal(cmd.includes("/tmp/windscribe-cli.pkg.tar.zst"), false)
+  assert.match(cmd, /mktemp -d/)
+  assert.match(cmd, /trap 'rm -rf -- "\$dir"' EXIT/)
+  assert.match(cmd, /--proto '=https'/)
+  assert.match(cmd, /https:\/\/windscribe\.com\/install\/desktop\/linux_zst_x64_cli/)
+  assert.match(cmd, /\[ -f "\$pkg" \] && \[ ! -L "\$pkg" \]/)
+  assert.match(cmd, /sudo pacman -U --noconfirm "\$pkg"/)
+})
+
+test("stateDirPrepareCommand hardens a real directory and refuses a symlink", () => {
+  const os = require("node:os")
+  const { execFileSync } = require("node:child_process")
+  const cmd = Model.stateDirPrepareCommand("/tmp/omarchy-windscribe")
+  assert.match(cmd, /\[ -L "\$dir" \]/)
+  assert.match(cmd, /chmod 700 "\$dir"/)
+  assert.match(cmd, /mkdir -m 700 "\$dir"/)
+  assert.equal(cmd.includes("mkdir -p \"$dir\""), false)
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ws-state-"))
+  try {
+    const existing = path.join(tmp, "omarchy-windscribe")
+    fs.mkdirSync(existing, { mode: 0o755 })
+    const recents = { recents: [{ key: "loc:toronto", city: "Toronto" }] }
+    fs.writeFileSync(path.join(existing, "state.json"), JSON.stringify(recents))
+    execFileSync("bash", ["-c", Model.stateDirPrepareCommand(existing)])
+    const st = fs.lstatSync(existing)
+    assert.equal(st.isSymbolicLink(), false)
+    assert.equal(st.isDirectory(), true)
+    assert.equal(st.mode & 0o777, 0o700)
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(existing, "state.json"), "utf8")), recents)
+
+    const fresh = path.join(tmp, "nested", "omarchy-windscribe")
+    execFileSync("bash", ["-c", Model.stateDirPrepareCommand(fresh)])
+    const created = fs.lstatSync(fresh)
+    assert.equal(created.isSymbolicLink(), false)
+    assert.equal(created.mode & 0o777, 0o700)
+
+    const linked = path.join(tmp, "linked")
+    fs.symlinkSync(existing, linked)
+    assert.throws(
+      () => execFileSync("bash", ["-c", Model.stateDirPrepareCommand(linked)], { stdio: "pipe" }),
+    )
+    assert.equal(fs.lstatSync(linked).isSymbolicLink(), true)
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(existing, "state.json"), "utf8")), recents)
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test("terminalCommandWithResult writes the marker without following a symlink", () => {
+  const os = require("node:os")
+  const { execFileSync } = require("node:child_process")
+  const marker = "/tmp/omarchy-windscribe/signin.result"
+  const cmd = Model.terminalCommandWithResult("windscribe-cli login", marker)
+  assert.equal(cmd.includes("rm -f \"$result\""), false)
+  assert.match(cmd, /mktemp "\$\{result\}\.XXXXXX"/)
+  assert.match(cmd, /mv -f -T "\$tmp" "\$result"/)
+  assert.match(cmd, /windscribe-cli login/)
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ws-marker-"))
+  try {
+    execFileSync("mv", ["-T", "--version"], { stdio: "ignore" })
+  } catch {
+    fs.rmSync(tmp, { recursive: true, force: true })
+    return
+  }
+
+  try {
+    const result = path.join(tmp, "signin.result")
+    const outside = path.join(tmp, "outside")
+    fs.writeFileSync(outside, "untouched")
+    fs.symlinkSync(outside, result)
+    execFileSync("bash", ["-c", Model.terminalCommandWithResult("true", result)])
+    assert.equal(fs.lstatSync(result).isSymbolicLink(), false)
+    assert.equal(fs.readFileSync(result, "utf8"), "0")
+    assert.equal(fs.readFileSync(outside, "utf8"), "untouched")
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})

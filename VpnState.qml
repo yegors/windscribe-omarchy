@@ -85,6 +85,7 @@ Item {
   property var recents: []
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/omarchy-windscribe"
   readonly property string statePath: stateDir + "/state.json"
+  property bool stateDirReady: false
   property string signInResultPath: ""
   property string updateResultPath: ""
 
@@ -435,14 +436,6 @@ Item {
   // captcha), so it happens in Omarchy's floating terminal. The command is a
   // fixed literal — nothing user-typed crosses a shell boundary. A private
   // result marker tells the panel exactly when the CLI has released its slot.
-  function terminalCommandWithResult(command, resultPath) {
-    var marker = Model.shellQuote(resultPath)
-    return "result=" + marker
-      + "; rm -f \"$result\"; code=1"
-      + "; trap 'printf \"%s\" \"$code\" > \"$result\"' EXIT"
-      + "; " + command + "; code=$?; exit \"$code\""
-  }
-
   function operationResultPath(kind) {
     return stateDir + "/" + kind + "-" + Date.now() + "-"
       + Math.floor(Math.random() * 1000000000) + ".result"
@@ -459,10 +452,16 @@ Item {
     _signInResultOutput = ""
     _signInLauncherExited = false
     _signInFallbackSuccesses = 0
-    signInResultPath = operationResultPath("signin")
+    var loginCommand = "windscribe-cli login"
+    if (stateDirReady) {
+      signInResultPath = operationResultPath("signin")
+      loginCommand = Model.terminalCommandWithResult(loginCommand, signInResultPath)
+    } else {
+      signInResultPath = ""
+    }
     signInLaunchProcess.command = [
       "omarchy-launch-floating-terminal-with-presentation",
-      terminalCommandWithResult("windscribe-cli login", signInResultPath)
+      loginCommand
     ]
     signInLaunchProcess.running = true
     signInWatch.restart()
@@ -482,7 +481,7 @@ Item {
     if (signInLaunchProcess.running) signInLaunchProcess.running = false
     var marker = signInResultPath
     signInResultPath = ""
-    if (marker !== "") Quickshell.execDetached(["rm", "-f", marker])
+    if (marker !== "") Quickshell.execDetached(["rm", "-f", "--", marker])
     if (result !== 0) {
       lastError = "Sign in did not complete"
       errorClearTimer.restart()
@@ -495,15 +494,13 @@ Item {
   // Official command-line package from windscribe.com.
   // A floating terminal owns the sudo prompt; this process never touches
   // privileges. The command is a fixed literal — nothing user-typed crosses
-  // a shell boundary. curl writes a real .pkg.tar.zst name because the
-  // download URL is a redirector (`linux_zst_x64_cli`) that pacman -U would
-  // refuse as a filename.
+  // a shell boundary.
   function installCli() {
     if (installed || installing || !installSupported) return
     installing = true
     lastError = ""
     Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation",
-      "echo 'Installing Windscribe CLI...'; curl -fL -o /tmp/windscribe-cli.pkg.tar.zst https://windscribe.com/install/desktop/linux_zst_x64_cli && sudo pacman -U --noconfirm /tmp/windscribe-cli.pkg.tar.zst && rm -f /tmp/windscribe-cli.pkg.tar.zst"])
+      Model.cliInstallCommand()])
     installWatch.restart()
   }
 
@@ -520,10 +517,16 @@ Item {
     _updateResultOutput = ""
     _updateLauncherExited = false
     _updateFallbackSuccesses = 0
-    updateResultPath = operationResultPath("update")
+    var updateCommand = "windscribe-cli update"
+    if (stateDirReady) {
+      updateResultPath = operationResultPath("update")
+      updateCommand = Model.terminalCommandWithResult(updateCommand, updateResultPath)
+    } else {
+      updateResultPath = ""
+    }
     updateLaunchProcess.command = [
       "omarchy-launch-floating-terminal-with-presentation",
-      terminalCommandWithResult("windscribe-cli update", updateResultPath)
+      updateCommand
     ]
     updateLaunchProcess.running = true
     updateWatch.restart()
@@ -543,7 +546,7 @@ Item {
     if (updateLaunchProcess.running) updateLaunchProcess.running = false
     var marker = updateResultPath
     updateResultPath = ""
-    if (marker !== "") Quickshell.execDetached(["rm", "-f", marker])
+    if (marker !== "") Quickshell.execDetached(["rm", "-f", "--", marker])
     if (result !== 0) {
       lastError = "Update did not complete"
       errorClearTimer.restart()
@@ -577,6 +580,7 @@ Item {
   }
 
   function saveState() {
+    if (!stateDirReady) return
     stateFile.setText(JSON.stringify({ recents: recents }))
   }
 
@@ -698,7 +702,16 @@ Item {
     startQueuedAction()
   }
 
-  Component.onCompleted: Quickshell.execDetached(["mkdir", "-p", stateDir])
+  Process {
+    id: stateDirProcess
+    running: true
+    command: ["bash", "-c", Model.stateDirPrepareCommand(root.stateDir)]
+    onExited: function(exitCode) {
+      root.stateDirReady = exitCode === 0
+      if (root.stateDirReady) stateFile.reload()
+      else root.applyState("{}")
+    }
+  }
 
   Timer {
     id: refreshTimer
@@ -848,9 +861,11 @@ Item {
     onTriggered: {
       ticks += 1
       if (signInResultProcess.running) return
-      root._signInResultOutput = ""
-      signInResultProcess.command = ["cat", root.signInResultPath]
-      signInResultProcess.running = true
+      if (root.signInResultPath !== "") {
+        root._signInResultOutput = ""
+        signInResultProcess.command = ["cat", root.signInResultPath]
+        signInResultProcess.running = true
+      }
       if (((root._signInLauncherExited && ticks >= 8) || ticks > 30) && ticks % 3 === 0
           && !signInFallbackProcess.running) {
         signInFallbackProcess.command = ["windscribe-cli", "status"]
@@ -885,9 +900,11 @@ Item {
     onTriggered: {
       ticks += 1
       if (updateResultProcess.running) return
-      root._updateResultOutput = ""
-      updateResultProcess.command = ["cat", root.updateResultPath]
-      updateResultProcess.running = true
+      if (root.updateResultPath !== "") {
+        root._updateResultOutput = ""
+        updateResultProcess.command = ["cat", root.updateResultPath]
+        updateResultProcess.running = true
+      }
       if (((root._updateLauncherExited && ticks >= 8) || ticks > 30) && ticks % 3 === 0
           && !updateFallbackProcess.running) {
         updateFallbackProcess.command = ["windscribe-cli", "status"]
@@ -996,7 +1013,7 @@ Item {
     id: stateFile
     path: root.statePath
     printErrors: false
-    onLoaded: root.applyState(text())
+    onLoaded: if (root.stateDirReady) root.applyState(text())
     onLoadFailed: root.applyState("{}")
   }
 
