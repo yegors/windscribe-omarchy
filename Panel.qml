@@ -1192,11 +1192,11 @@ Panel {
 
           // ── Status / errors / recovery ──────────────────────────────────
           Text {
-            visible: vpn.actionStatus !== "" || vpn.lastError !== ""
+            visible: vpn.lastError !== ""
             width: parent.width
-            text: vpn.actionStatus !== "" ? vpn.actionStatus : vpn.lastError
+            text: vpn.lastError
             textFormat: Text.PlainText
-            color: vpn.lastError !== "" && vpn.actionStatus === "" ? root.urgentFg : root.dimFg
+            color: root.urgentFg
             font.family: root.contentFontFamily
             font.pixelSize: root.fzSmall
             wrapMode: Text.WordWrap

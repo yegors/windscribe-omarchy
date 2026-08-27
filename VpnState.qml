@@ -61,7 +61,6 @@ Item {
   property string portsProtocol: ""
 
   property string lastError: ""
-  property string actionStatus: ""
   property string pendingLabel: ""
   property int desiredState: -1
 
@@ -684,7 +683,6 @@ Item {
       _retryPortsAfterAction = true
     }
     lastError = ""
-    actionStatus = ""
     errorClearTimer.stop()
     _actionAborted = false
     pendingLabel = label || ""
@@ -741,13 +739,6 @@ Item {
     interval: 8000
     repeat: false
     onTriggered: root.lastError = ""
-  }
-
-  Timer {
-    id: actionStatusTimer
-    interval: 6000
-    repeat: false
-    onTriggered: root.actionStatus = ""
   }
 
   Timer {
@@ -1232,10 +1223,11 @@ Item {
       } else {
         root.lastError = ""
         if (kind === "connect") {
+          // No in-panel confirmation: the hero, tunnel line, and button
+          // already flip on connect, and a transient line would resize the
+          // panel. The desktop notification carries the CLI's own words.
           var lines = stdout.split(/\r?\n/).filter(function(l) { return l.trim() !== "" })
           var line = Model.elide(lines.length > 0 ? lines[lines.length - 1] : "Connected")
-          root.actionStatus = line
-          actionStatusTimer.restart()
           root.recordRecent(target)
           root.notify("Windscribe connected", line, "normal")
         }
