@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "com.windscribe.vpn",
   "name": "Windscribe",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": "Windscribe Limited",
   "license": "MIT",
   "description": "Windscribe controls for Omarchy: live tunnel telemetry, Best Location, location search, Firewall, protocol and port selection, IP rotation, allowance tracking, and keyboard-first controls.",

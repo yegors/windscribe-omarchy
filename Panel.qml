@@ -689,9 +689,6 @@ Panel {
             protocolText: root.instrumentProtocol
             ipAddress: vpn.markupSafeText(vpn.ipAddress)
             ipIsVpn: vpn.ipIsVpn
-            dataUsageText: vpn.markupSafeText(vpn.dataUsage)
-            usageUnlimited: vpn.usage.unlimited
-            usageFraction: vpn.usage.fraction
             rxHistory: vpn.rxHistory
             txHistory: vpn.txHistory
             rxRate: vpn.rxRate
@@ -840,7 +837,8 @@ Panel {
             onRowClicked: vpn.signIn()
           }
 
-          // ── Immediate destinations ──────────────────────────────────────
+          // ── Immediate destinations: pill chips with a leading mark, so
+          // they read as actions — never as navigation. ────────────────────
           Row {
             id: quickRow
             visible: vpn.installed && vpn.loggedIn
@@ -852,14 +850,15 @@ Panel {
             Repeater {
               model: root.quickEntries
 
-              QuickPill {
+              QuickChip {
                 required property var modelData
                 width: quickRow.cellWidth
-                text: vpn.markupSafeText(modelData.title)
+                icon: modelData.kind === "best" ? "󰓾" : "󰋚"
+                label: vpn.markupSafeText(modelData.title)
                 selected: modelData.kind === "recent"
                   && String(vpn.city).toLowerCase() === String(modelData.city).toLowerCase()
                 enabled: !vpn.busy
-                onClicked: {
+                onActivated: {
                   if (modelData.kind === "best") vpn.connectBest()
                   else vpn.connectTo(modelData.target)
                 }
@@ -867,16 +866,25 @@ Panel {
             }
           }
 
-          // ── Tabs ────────────────────────────────────────────────────────
-          Row {
+          // ── Tabs: one segmented strip, so navigation can't be mistaken
+          // for the action chips above it. ─────────────────────────────────
+          Rectangle {
             id: tabRow
             visible: vpn.installed && vpn.loggedIn
             width: parent.width
-            spacing: Style.space(8)
-            readonly property real cellWidth: (width - spacing) / 2
+            implicitHeight: Style.space(30)
+            radius: Style.cornerRadius > 0 ? Style.space(7) : 0
+            color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.035)
+            border.color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.12)
+            border.width: 1
 
-            TabPill { text: "Locations"; tabKey: "locations"; width: tabRow.cellWidth }
-            TabPill { text: "Connection"; tabKey: "connection"; width: tabRow.cellWidth }
+            Row {
+              anchors.fill: parent
+              anchors.margins: Style.space(2)
+
+              TabCell { text: "Locations"; tabKey: "locations"; width: (tabRow.width - Style.space(4)) / 2; height: parent.height }
+              TabCell { text: "Connection"; tabKey: "connection"; width: (tabRow.width - Style.space(4)) / 2; height: parent.height }
+            }
           }
 
           // ── Locations ───────────────────────────────────────────────────
@@ -1243,6 +1251,65 @@ Panel {
               onRowClicked: vpn.updateCli()
             }
 
+            // ── Data allowance: plan usage with a quiet meter ─────────────
+            Column {
+              visible: vpn.dataUsage !== ""
+              width: parent.width
+              spacing: Style.space(6)
+
+              Item {
+                width: parent.width
+                implicitHeight: Math.max(allowanceTitle.implicitHeight, allowanceValue.implicitHeight)
+
+                Text {
+                  id: allowanceTitle
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.space(12)
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "Data allowance"
+                  textFormat: Text.PlainText
+                  color: root.contentForeground
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                }
+
+                Text {
+                  id: allowanceValue
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(10)
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: vpn.markupSafeText(vpn.dataUsage)
+                  textFormat: Text.PlainText
+                  color: !vpn.usage.unlimited && vpn.usage.fraction > 0.9
+                    ? root.urgentForeground
+                    : root.dimForeground
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+
+              Rectangle {
+                visible: !vpn.usage.unlimited
+                x: Style.space(12)
+                width: parent.width - Style.space(22)
+                height: 3
+                radius: 1.5
+                color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.14)
+
+                Rectangle {
+                  width: parent.width * Math.max(0, Math.min(1, vpn.usage.fraction))
+                  height: parent.height
+                  radius: parent.radius
+                  color: vpn.usage.fraction > 0.9 ? root.urgentForeground : Color.accent
+
+                  Behavior on width {
+                    NumberAnimation { duration: root.motionOn ? 220 : 0; easing.type: Easing.OutCubic }
+                  }
+                }
+              }
+            }
+
             PanelSeparator { foreground: root.contentForeground }
 
             Item {
@@ -1304,33 +1371,119 @@ Panel {
     }
   }
 
-  component TabPill: Button {
-    id: pill
+  component TabCell: Item {
+    id: cell
     property string tabKey: ""
-    fontSize: Style.font.bodySmall
-    foreground: root.contentForeground
-    fontFamily: root.contentFontFamily
-    horizontalPadding: Style.spacing.controlPaddingX
-    verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
-    bordered: true
-    selected: root.tab === tabKey
-    Accessible.role: Accessible.Button
+    property string text: ""
+    readonly property bool active: root.tab === tabKey
+    Accessible.role: Accessible.PageTab
     Accessible.name: text
-    Accessible.selected: selected
+    Accessible.selected: active
+    Accessible.focusable: true
     Accessible.onPressAction: root.setTab(tabKey)
-    onClicked: root.setTab(tabKey)
+
+    Rectangle {
+      anchors.fill: parent
+      radius: Style.cornerRadius > 0 ? Style.space(5) : 0
+      color: cell.active
+        ? Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.10)
+        : (cellArea.containsMouse
+            ? Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.05)
+            : "transparent")
+    }
+
+    // The active tab carries a small accent tick — state you can read from
+    // across the room, in any theme.
+    Rectangle {
+      visible: cell.active
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.bottom: parent.bottom
+      anchors.bottomMargin: Style.space(3)
+      width: Style.space(16)
+      height: 2
+      radius: 1
+      color: Color.accent
+    }
+
+    Text {
+      anchors.centerIn: parent
+      anchors.verticalCenterOffset: -1
+      text: cell.text
+      textFormat: Text.PlainText
+      color: cell.active ? root.contentForeground : root.dimForeground
+      font.family: root.contentFontFamily
+      font.pixelSize: Style.font.bodySmall
+      font.bold: cell.active
+    }
+
+    MouseArea {
+      id: cellArea
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: root.setTab(cell.tabKey)
+    }
   }
 
-  component QuickPill: Button {
-    fontSize: Style.font.caption
-    foreground: root.contentForeground
-    fontFamily: root.contentFontFamily
-    horizontalPadding: Style.space(8)
-    verticalPadding: Style.space(6)
-    bordered: true
+  component QuickChip: Rectangle {
+    id: chip
+    property string icon: ""
+    property string label: ""
+    property bool selected: false
+    signal activated()
+
+    implicitHeight: chipRow.implicitHeight + Style.space(12)
+    radius: height / 2
+    color: chip.selected
+      ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.13)
+      : (chipArea.containsMouse && chip.enabled
+          ? Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.09)
+          : Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.045))
+    border.color: chip.selected
+      ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.55)
+      : Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.13)
+    border.width: 1
+    opacity: enabled ? 1.0 : 0.55
     Accessible.role: Accessible.Button
-    Accessible.name: text
-    Accessible.onPressAction: if (enabled) clicked()
+    Accessible.name: label
+    Accessible.focusable: true
+    Accessible.onPressAction: if (chip.enabled) chip.activated()
+
+    Row {
+      id: chipRow
+      anchors.centerIn: parent
+      spacing: Style.space(6)
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        text: chip.icon
+        textFormat: Text.PlainText
+        color: chip.selected ? Color.accent : root.dimForeground
+        font.family: root.contentFontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        width: Math.min(implicitWidth, chip.width - Style.space(38))
+        text: chip.label
+        textFormat: Text.PlainText
+        color: root.contentForeground
+        font.family: root.contentFontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: chip.selected
+        elide: Text.ElideRight
+      }
+    }
+
+    MouseArea {
+      id: chipArea
+      anchors.fill: parent
+      hoverEnabled: true
+      enabled: chip.enabled
+      cursorShape: chip.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onClicked: chip.activated()
+    }
   }
 
   component ToggleRow: CursorSurface {

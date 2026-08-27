@@ -5,7 +5,11 @@ import "Model.js" as Model
 
 // A live, abstract view of the VPN path. Every mark is backed by state the
 // plugin already knows: tunnel state, exit label, protocol, Firewall, IP,
-// allowance, and kernel traffic counters. No origin lookup or invented score.
+// and kernel traffic counters. No origin lookup or invented score.
+//
+// The card is drawn as an instrument: corner brackets instead of a boxed
+// border, a callout capsule for the protocol above the line — never crossing
+// it — and one ink throughout, taken from the active theme.
 Item {
   id: root
 
@@ -25,9 +29,6 @@ Item {
   property string firewallText: ""
   property string ipAddress: ""
   property bool ipIsVpn: false
-  property string dataUsageText: ""
-  property bool usageUnlimited: true
-  property real usageFraction: 0
 
   property var rxHistory: []
   property var txHistory: []
@@ -86,29 +87,64 @@ Item {
   Rectangle {
     id: frame
     width: parent.width
-    implicitHeight: content.implicitHeight + Style.space(28)
+    implicitHeight: content.implicitHeight + Style.space(30)
     radius: Style.cornerRadius > 0 ? Style.space(8) : 0
-    color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.035)
-    border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.18)
-    border.width: 1
-    clip: true
+    color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.030)
+
+    // Corner brackets, not a box: the card reads as an instrument. They take
+    // the signal color while a tunnel is up.
+    Repeater {
+      model: [
+        { rightSide: false, bottomSide: false },
+        { rightSide: true, bottomSide: false },
+        { rightSide: false, bottomSide: true },
+        { rightSide: true, bottomSide: true }
+      ]
+
+      Item {
+        id: bracket
+        required property var modelData
+        readonly property color bracketColor: root.active
+          ? Qt.rgba(root.signalColor.r, root.signalColor.g, root.signalColor.b, 0.55)
+          : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.30)
+        x: modelData.rightSide ? frame.width - Style.space(12) : 0
+        y: modelData.bottomSide ? frame.height - Style.space(12) : 0
+        width: Style.space(12)
+        height: Style.space(12)
+
+        Rectangle {
+          width: bracket.width
+          height: 1
+          y: bracket.modelData.bottomSide ? bracket.height - 1 : 0
+          color: bracket.bracketColor
+        }
+
+        Rectangle {
+          width: 1
+          height: bracket.height
+          x: bracket.modelData.rightSide ? bracket.width - 1 : 0
+          color: bracket.bracketColor
+        }
+      }
+    }
 
     Column {
       id: content
       anchors.left: parent.left
       anchors.right: parent.right
       anchors.top: parent.top
-      anchors.margins: Style.space(14)
+      anchors.margins: Style.space(15)
       spacing: Style.space(10)
 
+      // ── Header: identity left, protection and address right ────────────
       Item {
         width: parent.width
-        implicitHeight: Math.max(locationColumn.implicitHeight, firewallBadge.implicitHeight)
+        implicitHeight: Math.max(locationColumn.implicitHeight, statusColumn.implicitHeight)
 
         Column {
           id: locationColumn
           anchors.left: parent.left
-          anchors.right: firewallBadge.left
+          anchors.right: statusColumn.left
           anchors.rightMargin: Style.space(12)
           anchors.verticalCenter: parent.verticalCenter
           spacing: Style.space(2)
@@ -137,44 +173,147 @@ Item {
           }
         }
 
-        Rectangle {
-          id: firewallBadge
+        Column {
+          id: statusColumn
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
-          implicitWidth: firewallLabel.implicitWidth + Style.space(16)
-          implicitHeight: firewallLabel.implicitHeight + Style.space(8)
-          radius: height / 2
-          color: root.firewallOn
-            ? Qt.rgba(root.signalColor.r, root.signalColor.g, root.signalColor.b, 0.13)
-            : "transparent"
-          border.color: root.firewallOn
-            ? Qt.rgba(root.signalColor.r, root.signalColor.g, root.signalColor.b, 0.72)
-            : root.faint
-          border.width: 1
+          spacing: Style.space(5)
 
+          Rectangle {
+            id: firewallBadge
+            anchors.right: parent.right
+            implicitWidth: firewallLabel.implicitWidth + Style.space(16)
+            implicitHeight: firewallLabel.implicitHeight + Style.space(8)
+            radius: height / 2
+            color: root.firewallOn
+              ? Qt.rgba(root.signalColor.r, root.signalColor.g, root.signalColor.b, 0.13)
+              : "transparent"
+            border.color: root.firewallOn
+              ? Qt.rgba(root.signalColor.r, root.signalColor.g, root.signalColor.b, 0.72)
+              : root.faint
+            border.width: 1
+
+            Text {
+              id: firewallLabel
+              anchors.centerIn: parent
+              text: "FIREWALL  " + (root.firewallText || "Checking")
+              textFormat: Text.PlainText
+              color: root.firewallOn ? root.signalColor : root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+          }
+
+          // The address this connection presents, right where the
+          // connection lives. Click to rotate.
           Text {
-            id: firewallLabel
-            anchors.centerIn: parent
-            text: "FIREWALL  " + (root.firewallText || "Checking")
+            id: ipText
+            visible: root.ipAddress !== ""
+            anchors.right: parent.right
+            text: (root.ipIsVpn ? "VPN IP  " : "PUBLIC IP  ") + root.ipAddress
+              + (root.connected && root.ipIsVpn ? "  ↻" : "")
             textFormat: Text.PlainText
-            color: root.firewallOn ? root.signalColor : root.dim
+            color: ipArea.containsMouse && ipArea.enabled ? root.signalColor : root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
-            font.bold: true
+            font.bold: ipArea.containsMouse && ipArea.enabled
+            Accessible.role: root.connected && root.ipIsVpn
+              ? Accessible.Button
+              : Accessible.StaticText
+            Accessible.name: root.connected && root.ipIsVpn
+              ? "Rotate IP. Current " + text
+              : text
+            Accessible.focusable: root.connected && root.ipIsVpn
+            Accessible.onPressAction: {
+              if (root.connected && root.ipIsVpn && !root.busy) root.rotateRequested()
+            }
+
+            MouseArea {
+              id: ipArea
+              anchors.fill: parent
+              anchors.margins: -Style.space(4)
+              enabled: root.connected && root.ipIsVpn && !root.busy
+              hoverEnabled: true
+              cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+              onClicked: root.rotateRequested()
+            }
+
+            PanelToolTip {
+              visible: ipArea.containsMouse && ipArea.enabled
+              text: "Rotate IP — new address, same location"
+              fontFamily: root.fontFamily
+            }
           }
         }
       }
 
+      // ── The tunnel ──────────────────────────────────────────────────────
       Item {
         id: tunnel
         width: parent.width
-        height: Style.space(92)
+        height: Style.space(88)
+
+        readonly property real deviceCx: Style.space(16)
+        readonly property real exitCx: width - Style.space(19)
+        readonly property real trackY: Style.space(46)
+        // Clear of the exit node's 17px radius, so labels never collide.
+        readonly property real labelY: trackY + Style.space(21)
+
+        // Protocol callout: a capsule floating above the line, tied to it
+        // with a hairline tick — the line never crosses the label.
+        Rectangle {
+          id: protocolCapsule
+          anchors.horizontalCenter: parent.horizontalCenter
+          y: 0
+          implicitWidth: protocolLabel.implicitWidth + Style.space(18)
+          implicitHeight: protocolLabel.implicitHeight + Style.space(8)
+          radius: height / 2
+          color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.05)
+          border.color: root.active
+            ? Qt.rgba(root.signalColor.r, root.signalColor.g, root.signalColor.b, 0.60)
+            : root.faint
+          border.width: 1
+
+          Text {
+            id: protocolLabel
+            anchors.centerIn: parent
+            text: root.protocolText || "Automatic"
+            textFormat: Text.PlainText
+            color: root.active ? root.foreground : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: root.active
+          }
+        }
+
+        Rectangle {
+          id: calloutTick
+          anchors.horizontalCenter: parent.horizontalCenter
+          y: protocolCapsule.height + Style.space(1)
+          width: 1
+          height: tunnel.trackY - protocolCapsule.height - Style.space(4)
+          color: root.active
+            ? Qt.rgba(root.signalColor.r, root.signalColor.g, root.signalColor.b, 0.40)
+            : root.faint
+        }
+
+        // Soft glow under the live line.
+        Rectangle {
+          x: track.x
+          y: tunnel.trackY - 3
+          width: track.width
+          height: 6
+          radius: 3
+          color: root.signalColor
+          opacity: root.active ? 0.10 * root.trackPulse : 0
+        }
 
         Rectangle {
           id: track
-          x: Style.space(34)
-          y: Style.space(32)
-          width: tunnel.width - Style.space(68)
+          x: tunnel.deviceCx + Style.space(16)
+          y: tunnel.trackY - 1
+          width: tunnel.exitCx - Style.space(19) - x
           height: 2
           radius: 1
           color: root.faint
@@ -221,7 +360,7 @@ Item {
             width: inbound ? 6 : 4
             height: inbound ? 3 : 2
             radius: height / 2
-            y: track.y + (inbound ? -7 : 7)
+            y: tunnel.trackY + (inbound ? -6 : 5)
             color: root.signalColor
             opacity: root.packetsRunning && (inbound ? root.rxRate > 0 : root.txRate > 0)
               ? (inbound ? 0.95 : 0.64)
@@ -246,23 +385,26 @@ Item {
           }
         }
 
+        // The track stops short of both nodes, so nothing needs an opaque
+        // fill to hide it.
         Rectangle {
           id: deviceNode
           width: Style.space(28)
           height: width
           radius: width / 2
-          x: track.x - width / 2
-          y: track.y - height / 2 + 1
-          color: frame.color
+          x: tunnel.deviceCx - width / 2
+          y: tunnel.trackY - height / 2
+          color: "transparent"
           border.color: root.active ? root.signalColor : root.dim
           border.width: 2
 
-          Rectangle {
+          Text {
             anchors.centerIn: parent
-            width: Style.space(7)
-            height: width
-            radius: width / 2
+            text: "󰍹"
+            textFormat: Text.PlainText
             color: root.active ? root.signalColor : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.space(12)
           }
         }
 
@@ -270,8 +412,8 @@ Item {
           id: exitNode
           width: Style.space(34)
           height: width
-          x: track.x + track.width - width / 2
-          y: track.y - height / 2 + 1
+          x: tunnel.exitCx - width / 2
+          y: tunnel.trackY - height / 2
 
           Rectangle {
             id: firewallRing
@@ -279,7 +421,7 @@ Item {
             width: parent.width
             height: width
             radius: width / 2
-            color: frame.color
+            color: "transparent"
             border.color: root.firewallOn ? root.signalColor : root.dim
             border.width: root.firewallOn ? 2 : 1
             opacity: root.firewallOn ? 0.95 : 0.5
@@ -328,33 +470,9 @@ Item {
           }
         }
 
-        Rectangle {
-          id: protocolCapsule
-          anchors.horizontalCenter: parent.horizontalCenter
-          y: track.y - height / 2 + 1
-          implicitWidth: protocolLabel.implicitWidth + Style.space(16)
-          implicitHeight: protocolLabel.implicitHeight + Style.space(7)
-          radius: height / 2
-          color: frame.color
-          border.color: root.active ? root.signalColor : root.faint
-          border.width: 1
-
-          Text {
-            id: protocolLabel
-            anchors.centerIn: parent
-            text: root.protocolText || "Automatic"
-            textFormat: Text.PlainText
-            color: root.active ? root.foreground : root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            font.bold: root.active
-          }
-        }
-
         Text {
           anchors.left: parent.left
-          anchors.top: track.bottom
-          anchors.topMargin: Style.space(18)
+          y: tunnel.labelY
           text: "THIS DEVICE"
           textFormat: Text.PlainText
           color: root.dim
@@ -365,8 +483,7 @@ Item {
 
         Text {
           anchors.right: parent.right
-          anchors.top: track.bottom
-          anchors.topMargin: Style.space(18)
+          y: tunnel.labelY
           text: "VPN EXIT"
           textFormat: Text.PlainText
           color: root.dim
@@ -377,8 +494,7 @@ Item {
 
         Text {
           anchors.horizontalCenter: parent.horizontalCenter
-          anchors.top: track.bottom
-          anchors.topMargin: Style.space(18)
+          y: tunnel.labelY
           text: root.networkInterference
             ? "CHECK FAILED"
             : (root.tunnelTestPending
@@ -396,6 +512,7 @@ Item {
         }
       }
 
+      // ── Mirrored activity band ──────────────────────────────────────────
       Item {
         id: meter
         width: parent.width
@@ -410,6 +527,7 @@ Item {
         }
 
         Row {
+          id: meterRow
           anchors.fill: parent
           spacing: Style.space(2)
 
@@ -419,7 +537,7 @@ Item {
             Item {
               id: meterSlot
               required property int index
-              width: (meter.width - (root.meterBars - 1) * parent.spacing) / root.meterBars
+              width: (meter.width - (root.meterBars - 1) * meterRow.spacing) / root.meterBars
               height: meter.height
               readonly property real downValue: root.sample(root.rxHistory, index)
               readonly property real upValue: root.sample(root.txHistory, index)
@@ -458,9 +576,9 @@ Item {
         }
       }
 
+      // ── Readouts, separated by hairlines ────────────────────────────────
       Row {
         width: parent.width
-        spacing: Style.space(8)
 
         Repeater {
           model: [
@@ -471,9 +589,20 @@ Item {
           ]
 
           Item {
+            id: metric
             required property var modelData
-            width: (content.width - parent.spacing * 3) / 4
+            required property int index
+            width: content.width / 4
             implicitHeight: metricColumn.implicitHeight
+
+            Rectangle {
+              visible: metric.index > 0
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              width: 1
+              height: metric.implicitHeight - Style.space(2)
+              color: root.faint
+            }
 
             Column {
               id: metricColumn
@@ -503,87 +632,6 @@ Item {
                 elide: Text.ElideRight
               }
             }
-          }
-        }
-      }
-
-      Item {
-        visible: root.ipAddress !== "" || root.dataUsageText !== ""
-        width: parent.width
-        implicitHeight: Math.max(usageText.implicitHeight, ipText.implicitHeight)
-
-        Text {
-          id: usageText
-          anchors.left: parent.left
-          anchors.right: ipText.left
-          anchors.rightMargin: Style.space(12)
-          anchors.verticalCenter: parent.verticalCenter
-          text: root.dataUsageText === "" ? "" : "ALLOWANCE  " + root.dataUsageText
-          textFormat: Text.PlainText
-          color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
-        }
-
-        Text {
-          id: ipText
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          width: Math.min(implicitWidth, parent.width * 0.58)
-          text: root.ipAddress === ""
-            ? ""
-            : (root.ipIsVpn ? "VPN IP  " : "PUBLIC IP  ") + root.ipAddress + (root.connected && root.ipIsVpn ? "  ↻" : "")
-          textFormat: Text.PlainText
-          color: ipArea.containsMouse ? root.signalColor : root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          font.bold: ipArea.containsMouse
-          elide: Text.ElideMiddle
-          Accessible.role: root.connected && root.ipIsVpn
-            ? Accessible.Button
-            : Accessible.StaticText
-          Accessible.name: root.connected && root.ipIsVpn
-            ? "Rotate IP. Current " + text
-            : text
-          Accessible.focusable: root.connected && root.ipIsVpn
-          Accessible.onPressAction: {
-            if (root.connected && root.ipIsVpn && !root.busy) root.rotateRequested()
-          }
-
-          MouseArea {
-            id: ipArea
-            anchors.fill: parent
-            anchors.margins: -Style.space(4)
-            enabled: root.connected && root.ipIsVpn && !root.busy
-            hoverEnabled: true
-            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-            onClicked: root.rotateRequested()
-          }
-
-          PanelToolTip {
-            visible: ipArea.containsMouse && ipArea.enabled
-            text: "Rotate IP"
-            fontFamily: root.fontFamily
-          }
-        }
-      }
-
-      Rectangle {
-        visible: root.dataUsageText !== "" && !root.usageUnlimited
-        width: parent.width
-        height: 3
-        radius: 1.5
-        color: root.faint
-
-        Rectangle {
-          width: parent.width * Math.max(0, Math.min(1, root.usageFraction))
-          height: parent.height
-          radius: parent.radius
-          color: root.usageFraction > 0.9 ? root.urgent : root.signalColor
-
-          Behavior on width {
-            NumberAnimation { duration: root.motionEnabled ? 220 : 0; easing.type: Easing.OutCubic }
           }
         }
       }

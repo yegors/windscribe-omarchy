@@ -50,6 +50,26 @@ The home screen uses `TunnelInstrument.qml`:
 - [x] Pass parser/formatter tests and static editor diagnostics
 - [ ] Complete Linux/Omarchy runtime and visual validation
 
+## 0.4.0 refresh
+
+Feedback from the first on-device run, and the fixes:
+
+- The protocol capsule sat centered on the tunnel line with a translucent
+  fill, so the line struck through the label. It is now a callout: capsule
+  above the line, tied to it by a hairline tick. The track also stops short
+  of both nodes, so nothing relies on opaque fills to mask it.
+- Quick destinations and the tab strip were both bordered `Button`s and read
+  as the same control. Quick destinations are now pill chips with a leading
+  mark (target for Best Location, history for recents); tabs are one
+  segmented strip whose active cell is filled and carries an accent tick.
+- VPN IP (with rotate) moved into the instrument header under the Firewall
+  badge — the area that describes the connection. The allowance line left
+  the instrument for a metered **Data allowance** row on the Connection tab.
+- The instrument frame dropped its full border for corner brackets that take
+  the signal colour while a tunnel is up; the readout strip gained hairline
+  dividers; the live line gained a soft glow; the device node shows a
+  monitor glyph.
+
 ## Validation matrix
 
 Check these states on Omarchy:

@@ -43,12 +43,15 @@ does not receive or store them.
 The **Tunnel Instrument** replaces the usual VPN world map with information
 that matters now:
 
-- **This device → VPN exit** shows tunnel state
+- **This device → VPN exit** shows tunnel state between corner brackets that
+  take the signal colour while a tunnel is up
 - Moving packets reflect real download and upload activity
 - The exit ring reflects Firewall state
-- The center capsule shows the active protocol and port
+- A callout capsule above the line shows the active protocol and port
+- The connection header carries the exit, state, Firewall badge, and your
+  VPN IP — click the IP to rotate it
 - The mirrored activity band shows up to 60 seconds observed while open
-- VPN IP, allowance, rates, and this view's transfer/time stay visible
+- Rates and this view's transfer/time read out below the band
 
 The instrument never looks up or guesses your physical location. If motion is
 disabled, the same states remain visible without animation.
@@ -74,6 +77,7 @@ lets Windscribe choose an exit there.
 - **Interface motion** disables decorative state animation
 - **Rotate IP** requests a new address at the current location
 - **Update Windscribe** runs the official updater when one is advertised
+- **Data allowance** shows plan usage, with a meter on finite plans
 
 When signing out, an enabled Firewall stays enabled.
 
