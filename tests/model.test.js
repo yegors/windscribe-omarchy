@@ -127,6 +127,19 @@ test("protocol helpers use Windscribe labels and split ports", () => {
   assert.equal(Model.protocolPort("wstunnel"), "")
 })
 
+test("terminal shorthand helpers compress protocols and slugs", () => {
+  assert.equal(Model.protocolShortName("wireguard"), "wg")
+  assert.equal(Model.protocolShortName("wstunnel:443"), "ws")
+  assert.equal(Model.protocolShortName(""), "")
+  assert.equal(Model.protocolStatusShort("WireGuard:443"), "wg/443")
+  assert.equal(Model.protocolStatusShort("UDP"), "udp")
+  assert.equal(Model.protocolStatusShort("Stealth:8443"), "stealth/8443")
+  assert.equal(Model.protocolStatusShort(""), "")
+  assert.equal(Model.slugify("Washington DC"), "washington-dc")
+  assert.equal(Model.slugify("  US East "), "us-east")
+  assert.equal(Model.slugify("<x>"), "‹x›")
+})
+
 test("parsePorts accepts Windscribe's list and removes invalid duplicates", () => {
   assert.deepEqual(
     Array.from(Model.parsePorts("443, 80, 53, 443, 0, 65536")),

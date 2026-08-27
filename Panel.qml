@@ -26,15 +26,41 @@ Panel {
   property var favoriteLocations: []
   property bool signOutArmed: false
   property int panelOwnerId: 0
+  property string ddOpen: ""
+  property int ddIndex: 0
 
   readonly property var barIdentity: hostWidget || root
-  readonly property color contentForeground: bar ? bar.foreground : Color.foreground
-  readonly property color dimForeground: Qt.darker(contentForeground, 1.5)
-  readonly property color urgentForeground: bar ? bar.urgent : Color.urgent
+
+  // The design's ink levels, derived from the theme foreground so every
+  // Omarchy palette keeps the same hierarchy.
+  readonly property color fg: bar ? bar.foreground : Color.foreground
+  readonly property color urgentFg: bar ? bar.urgent : Color.urgent
+  readonly property color accent: Color.accent
+  readonly property color valueFg: Qt.rgba(fg.r, fg.g, fg.b, 0.92)
+  readonly property color rowFg: Qt.rgba(fg.r, fg.g, fg.b, 0.80)
+  readonly property color labelFg: Qt.rgba(fg.r, fg.g, fg.b, 0.60)
+  readonly property color dimFg: Qt.rgba(fg.r, fg.g, fg.b, 0.45)
+  readonly property color faintFg: Qt.rgba(fg.r, fg.g, fg.b, 0.32)
+  readonly property color hairline: Qt.rgba(fg.r, fg.g, fg.b, 0.10)
+  readonly property color leaderLine: Qt.rgba(fg.r, fg.g, fg.b, 0.16)
+  readonly property color accentDim: Qt.rgba(accent.r, accent.g, accent.b, 0.45)
+  // Opposite pole of the foreground: text on the filled connect button and
+  // an opaque surface for dropdown menus, on light and dark themes alike.
+  // hslHue is -1 for achromatic colors, so clamp it.
+  readonly property color inverseFg: fg.hslLightness > 0.5
+    ? Qt.hsla(Math.max(0, fg.hslHue), Math.min(fg.hslSaturation, 0.25), 0.07, 1)
+    : Qt.hsla(Math.max(0, fg.hslHue), Math.min(fg.hslSaturation, 0.25), 0.96, 1)
   readonly property string contentFontFamily: bar ? bar.fontFamily : Style.font.family
+
+  readonly property real fzCity: Style.font.display
+  readonly property real fzTitle: Style.font.bodySmall
+  readonly property real fzRow: Style.font.bodySmall
+  readonly property real fzMeta: Style.font.caption
+  readonly property real fzSmall: Math.max(8, Math.round(Style.font.caption * 0.92))
+  readonly property real fzMicro: Math.max(8, Math.round(Style.font.caption * 0.84))
+
   readonly property string toggleHint: vpn.active ? "Disconnect Windscribe" : "Connect Windscribe"
   readonly property var visibleEntries: buildEntries()
-  readonly property var quickEntries: buildQuickEntries()
   readonly property var connectionEntries: buildConnectionEntries()
   readonly property bool recoveryVisible: vpn.networkInterference || vpn.connectionState === "Error"
   readonly property bool motionOn: {
@@ -47,18 +73,17 @@ Panel {
   readonly property string selectedProtocolBase: Model.protocolBase(selectedProtocol)
   readonly property string selectedProtocolPort: Model.protocolPort(selectedProtocol)
   readonly property var portOptions: buildPortOptions()
-  readonly property string currentLocationText: locationDisplay(vpn.city)
-  readonly property string instrumentProtocol: vpn.protocol !== ""
-    ? vpn.markupSafeText(vpn.protocol)
-    : Model.protocolLabel((settings && settings.preferredProtocol) || "")
   readonly property var protocolOptions: [
-    { value: "", label: "Automatic", description: "Let Windscribe choose" },
-    { value: "wireguard", label: "WireGuard", description: "Fast, modern, post-quantum capable" },
-    { value: "udp", label: "UDP", description: "Fast OpenVPN transport" },
-    { value: "tcp", label: "TCP", description: "Reliable OpenVPN transport" },
-    { value: "stealth", label: "Stealth", description: "For restrictive networks" },
-    { value: "wstunnel", label: "WStunnel", description: "WebSocket tunnel for restrictive networks" }
+    { value: "", label: "automatic" },
+    { value: "wireguard", label: "wireguard" },
+    { value: "udp", label: "udp" },
+    { value: "tcp", label: "tcp" },
+    { value: "stealth", label: "stealth" },
+    { value: "wstunnel", label: "wstunnel" }
   ]
+  readonly property var waveLevels: buildWave()
+  readonly property bool tunnelSettled: vpn.connected && !vpn.transitional
+    && vpn.desiredState === -1 && !vpn.busy
 
   function open() {
     root.controller.show()
@@ -82,7 +107,9 @@ Panel {
   function setTab(key) {
     if (key !== "locations" && key !== "connection") return
     tab = key
+    ddOpen = ""
     focusSection = "header"
+    if (panelFlick) panelFlick.contentY = 0
   }
 
   function cycleTab(direction) {
@@ -143,25 +170,8 @@ Panel {
     return "target:" + String(value || "").toLowerCase()
   }
 
-  function locationDisplay(value) {
-    var raw = String(value || "")
-    return raw === "" ? "" : vpn.markupSafeText(raw)
-  }
-
-  function buildQuickEntries() {
-    var out = [{ kind: "best", title: "Best Location", target: "" }]
-    for (var i = 0; i < vpn.recents.length && out.length < 3; i++) {
-      var recent = vpn.recents[i]
-      if (!recent || !recent.city) continue
-      var resolved = locationByTarget(recent.city)
-      out.push({
-        kind: "recent",
-        title: resolved ? (resolved.nickname || resolved.city) : String(recent.city),
-        target: String(recent.city),
-        city: resolved ? resolved.city : String(recent.city)
-      })
-    }
-    return out
+  function lcText(value) {
+    return vpn.markupSafeText(value).toLowerCase()
   }
 
   function buildConnectionEntries() {
@@ -174,17 +184,17 @@ Panel {
   }
 
   function buildPortOptions() {
-    var out = [{ value: "", label: "Automatic", description: "Windscribe’s default port" }]
+    var out = [{ value: "", label: "auto" }]
     var seen = ({})
     var ports = vpn.portsProtocol === selectedProtocolBase ? vpn.availablePorts : []
     for (var i = 0; i < ports.length; i++) {
       var value = String(ports[i])
       if (seen[value]) continue
       seen[value] = true
-      out.push({ value: value, label: value, description: "Port " + value })
+      out.push({ value: value, label: value })
     }
     if (selectedProtocolPort !== "" && !seen[selectedProtocolPort])
-      out.push({ value: selectedProtocolPort, label: selectedProtocolPort, description: "Current port" })
+      out.push({ value: selectedProtocolPort, label: selectedProtocolPort })
     return out
   }
 
@@ -195,6 +205,7 @@ Panel {
 
     var bestMatches = query === ""
       || "best location".indexOf(query) === 0
+      || "fastest location".indexOf(query) === 0
       || "best".indexOf(query) === 0
     if (vpn.installed && bestMatches)
       out.push({ kind: "best", city: "", country: "", nickname: "", pro: false, tenGbps: false })
@@ -243,14 +254,40 @@ Panel {
     return out
   }
 
+  function rowIndexLabel(index) {
+    var value = index + 1
+    return (value < 10 ? "0" : "") + value
+  }
+
+  function entrySlug(entry) {
+    if (entry.kind === "best") return "fastest location"
+    if (entry.kind === "custom") return "connect “" + lcText(entry.city) + "”"
+    return Model.slugify(entry.city)
+  }
+
+  function entryMeta(entry) {
+    if (entry.kind === "best") return "auto · lowest latency"
+    if (entry.kind === "custom") return "city, region, or nickname"
+    var parts = []
+    if (entry.country) parts.push(Model.slugify(entry.country))
+    if (entry.nickname) parts.push(lcText(entry.nickname))
+    if (entry.pro) parts.push("pro")
+    return parts.join(" · ")
+  }
+
+  function entryBadge(entry) {
+    if (entry.kind === "best") return "auto"
+    return entry.tenGbps ? "10g" : ""
+  }
+
   function entryTitle(entry) {
-    if (entry.kind === "best") return "Best Location"
+    if (entry.kind === "best") return "Fastest location"
     if (entry.kind === "custom") return "Connect to “" + vpn.markupSafeText(entry.city) + "”"
     return vpn.markupSafeText(entry.city)
   }
 
   function entrySubtitle(entry) {
-    if (entry.kind === "best") return "Windscribe’s lowest-latency choice"
+    if (entry.kind === "best") return "Windscribe's lowest-latency choice"
     if (entry.kind === "custom") return "City, region, country code, or nickname"
     var parts = []
     if (entry.country) parts.push(vpn.markupSafeText(entry.country))
@@ -273,6 +310,91 @@ Panel {
   function activateEntry(entry) {
     if (entry.kind === "best") vpn.connectBest()
     else vpn.connectTo(entryTarget(entry))
+  }
+
+  // ── Hero copy ─────────────────────────────────────────────────────────
+  function heroTargetCity() {
+    if (vpn.city !== "") return String(vpn.city)
+    if (!vpn.connected && vpn.recents.length > 0 && vpn.recents[0] && vpn.recents[0].city)
+      return String(vpn.recents[0].city)
+    return ""
+  }
+
+  function heroCityText() {
+    var target = heroTargetCity()
+    if (target !== "") return lcText(target)
+    return vpn.connected ? "connected" : "best location"
+  }
+
+  function heroMetaText() {
+    var target = heroTargetCity()
+    if (target === "") return vpn.connected ? "" : "auto · lowest latency"
+    var resolved = locationByTarget(target)
+    if (!resolved) return ""
+    var parts = []
+    if (resolved.nickname) parts.push(lcText(resolved.nickname))
+    if (resolved.country) parts.push(Model.slugify(resolved.country))
+    return parts.join(" · ")
+  }
+
+  function firewallShort() {
+    return "fw " + (vpn.firewallOn ? "on" : "off")
+  }
+
+  function tunnelLineText() {
+    if (vpn.transitional || vpn.desiredState !== -1 || vpn.connectionState === "Disconnecting")
+      return lcText(vpn.pendingLabel !== "" ? vpn.pendingLabel : vpn.statusText)
+    if (vpn.connected) {
+      var parts = []
+      if (vpn.tunnelTestPending) parts.push("verifying")
+      var proto = Model.protocolStatusShort(vpn.protocol)
+      if (proto !== "") parts.push(proto)
+      parts.push(firewallShort())
+      return parts.join(" · ")
+    }
+    var next = selectedProtocolBase === ""
+      ? "auto"
+      : Model.protocolShortName(selectedProtocolBase)
+        + (selectedProtocolPort !== "" ? "/" + selectedProtocolPort : "")
+    return "next: " + next + " · " + firewallShort()
+  }
+
+  function connectLabel() {
+    if (vpn.transitional || vpn.desiredState !== -1 || vpn.busy || vpn.connectionState === "Disconnecting") {
+      var pending = vpn.pendingLabel !== "" ? vpn.pendingLabel : vpn.statusText
+      return lcText(pending)
+    }
+    if (vpn.connected) return "■ disconnect · " + Model.formatDuration(vpn.uptimeSec)
+    return "▶ connect"
+  }
+
+  function protocolValueText() {
+    if (selectedProtocolBase === "") return "automatic"
+    for (var i = 0; i < protocolOptions.length; i++)
+      if (protocolOptions[i].value === selectedProtocolBase) return protocolOptions[i].label
+    return selectedProtocolBase
+  }
+
+  function portValueText() {
+    return selectedProtocolPort === "" ? "auto" : selectedProtocolPort
+  }
+
+  function buildWave() {
+    var n = 44
+    var rx = vpn.rxHistory || []
+    var tx = vpn.txHistory || []
+    var vals = []
+    var max = 0
+    for (var i = 0; i < n; i++) {
+      var ri = rx.length - n + i
+      var ti = tx.length - n + i
+      var v = (ri >= 0 ? Number(rx[ri]) || 0 : 0) + (ti >= 0 ? Number(tx[ti]) || 0 : 0)
+      vals.push(v)
+      if (v > max) max = v
+    }
+    var out = []
+    for (var j = 0; j < n; j++) out.push(max > 0 ? vals[j] / max : 0)
+    return out
   }
 
   function persistSetting(key, value) {
@@ -374,8 +496,52 @@ Panel {
       && focusedConnectionKey === key
   }
 
+  // ── Dropdown popups ──────────────────────────────────────────────────
+  function ddOptions() {
+    if (ddOpen === "protocol") return protocolOptions
+    if (ddOpen === "port") return portOptions
+    return []
+  }
+
+  function ddCurrentValue() {
+    if (ddOpen === "protocol") return selectedProtocolBase
+    if (ddOpen === "port") return selectedProtocolPort
+    return ""
+  }
+
+  function toggleDropdown(key) {
+    if (ddOpen === key) {
+      ddOpen = ""
+      return
+    }
+    ddOpen = key
+    var options = ddOptions()
+    var current = ddCurrentValue()
+    ddIndex = 0
+    for (var i = 0; i < options.length; i++)
+      if (options[i].value === current) ddIndex = i
+    focusConnectionKey(key)
+  }
+
+  function pickDropdown(value) {
+    if (ddOpen === "protocol") {
+      persistSetting("preferredProtocol", value)
+      if (value !== "") vpn.refreshPorts(value)
+    } else if (ddOpen === "port") {
+      persistSetting("preferredProtocol",
+        selectedProtocolBase + (value === "" ? "" : ":" + value))
+    }
+    ddOpen = ""
+  }
+
   function moveCursor(direction) {
     cursorActive = true
+    if (ddOpen !== "") {
+      var options = ddOptions()
+      if (options.length > 0)
+        ddIndex = (ddIndex + direction + options.length) % options.length
+      return
+    }
     if (tab === "connection") {
       if (connectionEntries.length === 0) {
         focusSection = "header"
@@ -410,7 +576,9 @@ Panel {
       })
       return
     }
-    if (visibleEntries.length === 0) {
+    // The list is only rendered while installed and signed in; never let the
+    // cursor wander into it (or Enter act on it) otherwise.
+    if (!vpn.installed || !vpn.loggedIn || visibleEntries.length === 0) {
       focusSection = "header"
       return
     }
@@ -441,11 +609,17 @@ Panel {
   }
 
   function activateConnection() {
-    if (connectionEntries.length === 0 || vpn.busy) return
+    if (connectionEntries.length === 0) return
     var key = focusedConnectionKey
-    if (key === "firewall") vpn.setFirewall(!vpn.firewallOn)
-    else if (key === "protocol") protocolPicker.open()
-    else if (key === "port") portPicker.open()
+    // Pure-UI rows stay usable while the CLI is busy, matching the mouse.
+    var uiOnly = key === "protocol" || key === "port"
+      || key === "notifications" || key === "motion"
+    if (vpn.busy && !uiOnly) return
+    if (key === "firewall") {
+      if (!vpn.firewallLocked) vpn.setFirewall(!vpn.firewallOn)
+    }
+    else if (key === "protocol") toggleDropdown("protocol")
+    else if (key === "port") toggleDropdown("port")
     else if (key === "notifications")
       persistSetting("notifications", !vpn.notificationsOn)
     else if (key === "motion")
@@ -475,7 +649,15 @@ Panel {
   }
 
   function activateCursor() {
-    if (focusSection === "locations" && tab === "locations" && visibleEntries.length > 0) {
+    if (ddOpen !== "") {
+      var options = ddOptions()
+      if (options.length > 0)
+        pickDropdown(options[Math.max(0, Math.min(ddIndex, options.length - 1))].value)
+      else ddOpen = ""
+      return
+    }
+    if (focusSection === "locations" && tab === "locations"
+        && vpn.installed && vpn.loggedIn && visibleEntries.length > 0) {
       activateEntry(visibleEntries[locationIndex])
       return
     }
@@ -498,6 +680,18 @@ Panel {
     if (focusSection === "header") vpn.toggle()
   }
 
+  function handleClose() {
+    if (ddOpen !== "") {
+      ddOpen = ""
+      return
+    }
+    if (tab === "connection") {
+      setTab("locations")
+      return
+    }
+    close()
+  }
+
   function focusSearch() {
     searchField.forceActiveFocus()
     searchField.selectAll()
@@ -509,10 +703,9 @@ Panel {
 
   onSettingsChanged: syncFavoriteLocations()
   onSelectedProtocolBaseChanged: {
-    if (protocolPicker) protocolPicker.value = selectedProtocolBase
     if (selectedProtocolBase !== "") vpn.refreshPorts(selectedProtocolBase)
+    else if (ddOpen === "port") ddOpen = ""
   }
-  onSelectedProtocolPortChanged: if (portPicker) portPicker.value = selectedProtocolPort
   onRecoveryVisibleChanged: {
     if (!recoveryVisible && opened && focusSection === "recovery") focusHeader()
   }
@@ -534,6 +727,7 @@ Panel {
     vpn.setPanelOwnerOpen(panelOwnerId, opened)
     if (opened) {
       tab = "locations"
+      ddOpen = ""
       signOutArmed = false
       vpn.refresh()
       if (vpn.cliOnlyBuild && !vpn.locationsLoaded) vpn.refreshLocations()
@@ -551,15 +745,6 @@ Panel {
     onTriggered: root.signOutArmed = false
   }
 
-  Component {
-    id: vpnIcon
-    WindscribeCore.WindscribeIcon {
-      iconSize: Style.font.display
-      color: root.contentForeground
-      opacity: vpn.active ? 1.0 : 0.6
-    }
-  }
-
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
@@ -567,27 +752,30 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(440))
+    contentWidth: panel.fittedContentWidth(Style.space(400))
     contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(700))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: searchField.activeFocus || protocolPicker.popupOpen || portPicker.popupOpen
+      blocked: searchField.activeFocus
       onMoveRequested: function(dx, dy) {
         if (dy !== 0) root.moveCursor(dy)
         else if (dx !== 0) root.cycleTab(dx)
       }
       onActivateRequested: root.activateCursor()
-      onCloseRequested: root.close()
+      onCloseRequested: root.handleClose()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(text) {
+        if (root.ddOpen !== "") return
         if (text === "t" || text === "T") vpn.toggle()
         else if (text === "r" || text === "R") {
           vpn.refresh()
           vpn.refreshLocations()
         } else if (text === "w" || text === "W") {
-          vpn.setFirewall(!vpn.firewallOn)
+          if (!vpn.firewallLocked) vpn.setFirewall(!vpn.firewallOn)
+        } else if (text === "s" || text === "S") {
+          root.cycleTab(1)
         } else if (text === "f" || text === "F") {
           if (root.tab === "locations" && root.focusSection === "locations" && root.visibleEntries.length > 0) {
             var entry = root.visibleEntries[root.locationIndex]
@@ -627,155 +815,96 @@ Panel {
           width: panelFlick.width
           spacing: Style.space(12)
 
+          // ── Header: wordmark · dashed leader · VPN IP · rotate ─────────
           Item {
-            id: heroContainer
+            id: headerItem
             width: parent.width
-            implicitHeight: hero.implicitHeight
+            implicitHeight: Style.space(22)
+            Accessible.role: Accessible.StaticText
+            Accessible.name: "Windscribe. " + vpn.statusText
 
-            PanelHero {
-              id: hero
-              width: parent.width
-              iconComponent: vpnIcon
-              title: "Windscribe"
-              meta: ""
-              foreground: root.contentForeground
-              fontFamily: root.contentFontFamily
-
-              trailingControl: Component {
-                ToggleSwitch {
-                  id: powerSwitch
-                  // A live tunnel is enough to show the switch: you can
-                  // always disconnect, even before sign-in state is known.
-                  visible: vpn.installed && (vpn.loggedIn || vpn.connected)
-                  checked: vpn.active
-                  busy: vpn.busy
-                  hasCursor: root.cursorActive && root.focusSection === "header"
-                  foreground: hero.foreground
-                  Accessible.role: Accessible.CheckBox
-                  Accessible.name: root.toggleHint
-                  Accessible.checkable: true
-                  Accessible.checked: checked
-                  Accessible.onPressAction: if (!vpn.busy) vpn.toggle()
-                  Accessible.onToggleAction: if (!vpn.busy) vpn.toggle()
-                  onHovered: function(on) { if (on) root.focusHeader() }
-                  onToggled: vpn.toggle()
-
-                  PanelToolTip {
-                    visible: powerSwitch.containsMouse
-                    text: root.toggleHint
-                    fontFamily: hero.fontFamily
-                  }
-                }
-              }
-            }
-          }
-
-          // ── Live tunnel instrument ──────────────────────────────────────
-          WindscribeCore.TunnelInstrument {
-            visible: vpn.installed && (vpn.loggedIn || vpn.connected)
-            width: parent.width
-            active: vpn.active
-            connected: vpn.connected
-            busy: vpn.busy
-            tunnelChanging: vpn.transitional || vpn.desiredState !== -1
-            firewallOn: vpn.firewallOn
-            firewallText: vpn.firewall === "" ? "Checking" : vpn.markupSafeText(vpn.firewall)
-            tunnelTestPending: vpn.tunnelTestPending
-            networkInterference: vpn.networkInterference
-            motionEnabled: root.motionOn
-            presentationActive: root.opened
-            stateText: vpn.statusText
-            locationText: root.currentLocationText
-            protocolText: root.instrumentProtocol
-            ipAddress: vpn.markupSafeText(vpn.ipAddress)
-            ipIsVpn: vpn.ipIsVpn
-            rxHistory: vpn.rxHistory
-            txHistory: vpn.txHistory
-            rxRate: vpn.rxRate
-            txRate: vpn.txRate
-            sessionRx: vpn.sessionRx
-            sessionTx: vpn.sessionTx
-            uptimeSec: vpn.uptimeSec
-            foreground: root.contentForeground
-            accent: Color.accent
-            urgent: root.urgentForeground
-            fontFamily: root.contentFontFamily
-            onRotateRequested: vpn.rotateIp()
-          }
-
-          Text {
-            visible: vpn.actionStatus !== "" || vpn.lastError !== ""
-            width: parent.width
-            text: vpn.actionStatus !== "" ? vpn.actionStatus : vpn.lastError
-            textFormat: Text.PlainText
-            color: vpn.lastError !== "" && vpn.actionStatus === "" ? root.urgentForeground : root.dimForeground
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.bodySmall
-            wrapMode: Text.WordWrap
-          }
-
-          Row {
-            id: recoveryRow
-            visible: root.recoveryVisible
-            spacing: Style.space(8)
-
-            Button {
-              text: "Retry"
-              bordered: true
-              foreground: root.contentForeground
-              fontFamily: root.contentFontFamily
-              enabled: !vpn.busy
-              hasCursor: root.cursorActive && root.focusSection === "recovery" && root.recoveryIndex === 0
-              Accessible.role: Accessible.Button
-              Accessible.name: text
-              Accessible.onPressAction: {
-                if (!vpn.busy) {
-                  root.recoveryIndex = 0
-                  root.activateRecovery()
-                }
-              }
-              onHovered: function(on) { if (on) root.focusRecovery(0) }
-              onClicked: {
-                root.recoveryIndex = 0
-                root.activateRecovery()
-              }
+            Text {
+              id: wordmark
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: "windscribe"
+              textFormat: Text.PlainText
+              color: root.fg
+              font.family: root.contentFontFamily
+              font.pixelSize: root.fzTitle
+              font.bold: true
+              font.letterSpacing: 0.3
             }
 
-            Button {
-              text: "Change protocol"
-              bordered: true
-              foreground: root.contentForeground
-              fontFamily: root.contentFontFamily
-              hasCursor: root.cursorActive && root.focusSection === "recovery" && root.recoveryIndex === 1
-              Accessible.role: Accessible.Button
-              Accessible.name: text
-              Accessible.onPressAction: {
-                root.recoveryIndex = 1
-                root.activateRecovery()
+            Leader {
+              anchors.left: wordmark.right
+              anchors.leftMargin: Style.space(10)
+              anchors.right: headerRight.left
+              anchors.rightMargin: Style.space(10)
+              anchors.verticalCenter: parent.verticalCenter
+              lineColor: root.leaderLine
+            }
+
+            Row {
+              id: headerRight
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(8)
+
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: {
+                  if (root.tab === "connection") return "settings"
+                  if (vpn.connected && vpn.ipIsVpn && vpn.ipAddress !== "")
+                    return vpn.markupSafeText(vpn.ipAddress)
+                  return "off"
+                }
+                textFormat: Text.PlainText
+                color: root.tab !== "connection" && vpn.connected && vpn.ipIsVpn
+                  ? root.accent
+                  : root.labelFg
+                font.family: root.contentFontFamily
+                font.pixelSize: root.fzMeta
+                font.bold: root.tab !== "connection" && vpn.connected && vpn.ipIsVpn
+                font.letterSpacing: 0.3
               }
-              onHovered: function(on) { if (on) root.focusRecovery(1) }
-              onClicked: {
-                root.recoveryIndex = 1
-                root.activateRecovery()
+
+              Text {
+                id: rotateGlyph
+                visible: root.tab === "locations" && vpn.connected && vpn.ipIsVpn
+                anchors.verticalCenter: parent.verticalCenter
+                text: "󰑓"
+                textFormat: Text.PlainText
+                color: rotateArea.containsMouse && !vpn.busy ? root.fg : root.dimFg
+                font.family: root.contentFontFamily
+                font.pixelSize: root.fzMeta
+                Accessible.role: Accessible.Button
+                Accessible.name: "Rotate IP"
+                Accessible.focusable: true
+                Accessible.onPressAction: if (!vpn.busy) vpn.rotateIp()
+
+                MouseArea {
+                  id: rotateArea
+                  anchors.fill: parent
+                  anchors.margins: -Style.space(4)
+                  hoverEnabled: true
+                  enabled: !vpn.busy
+                  cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                  onClicked: vpn.rotateIp()
+                }
               }
             }
           }
 
           // ── First run: Windscribe isn't there yet ───────────────────────
-          Column {
+          Text {
             visible: !vpn.installed && !vpn.archProbed
             width: parent.width
-            spacing: Style.space(8)
-
-            Text {
-              width: parent.width
-              text: "Checking system…"
-              textFormat: Text.PlainText
-              color: root.dimForeground
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.bodySmall
-              horizontalAlignment: Text.AlignHCenter
-            }
+            text: "probing system…"
+            textFormat: Text.PlainText
+            color: root.dimFg
+            font.family: root.contentFontFamily
+            font.pixelSize: root.fzSmall
           }
 
           Column {
@@ -783,150 +912,349 @@ Panel {
             width: parent.width
             spacing: Style.space(8)
 
-            ActionRow {
+            BlockButton {
               width: parent.width
-              hasCursor: root.cursorActive && root.focusSection === "header"
-              icon: "󰇚"
-              title: vpn.installing ? "Installing…" : "Install Windscribe CLI"
-              subtitle: vpn.installing
-                ? "Finish in the terminal"
-                : "Required to connect"
+              label: vpn.installing ? "installing…" : "▶ install windscribe"
+              primary: !vpn.installing
               enabled: !vpn.installing
-              onRowHovered: root.focusHeader()
-              onRowClicked: vpn.installCli()
+              hasCursor: root.cursorActive && root.focusSection === "header"
+              accessibleName: "Install Windscribe CLI"
+              onActivated: vpn.installCli()
+              onHoverFocus: root.focusHeader()
+            }
+
+            Text {
+              width: parent.width
+              text: vpn.installing ? "finish in the terminal" : "required to connect"
+              textFormat: Text.PlainText
+              color: root.faintFg
+              font.family: root.contentFontFamily
+              font.pixelSize: root.fzMicro
             }
           }
 
           Column {
             visible: !vpn.installed && vpn.archProbed && !vpn.installSupported
             width: parent.width
-            spacing: Style.space(8)
+            spacing: Style.space(4)
 
             Text {
               width: parent.width
-              text: "Windscribe CLI is unavailable"
+              text: "windscribe cli is unavailable"
               textFormat: Text.PlainText
-              color: root.contentForeground
+              color: root.rowFg
               font.family: root.contentFontFamily
-              font.pixelSize: Style.font.body
+              font.pixelSize: root.fzRow
               font.bold: true
               wrapMode: Text.WordWrap
             }
 
             Text {
               width: parent.width
-              text: "This system is not currently supported."
+              text: "this system is not currently supported"
               textFormat: Text.PlainText
-              color: root.dimForeground
+              color: root.dimFg
               font.family: root.contentFontFamily
-              font.pixelSize: Style.font.caption
+              font.pixelSize: root.fzSmall
               wrapMode: Text.WordWrap
             }
           }
 
           // ── Sign in ─────────────────────────────────────────────────────
-          ActionRow {
+          Column {
             visible: vpn.installed && vpn.loggedOut && !vpn.connected
             width: parent.width
-            hasCursor: root.cursorActive && root.focusSection === "header"
-            icon: "󰌆"
-            title: vpn.signingIn ? "Signing in…" : "Sign in"
-            subtitle: "Credentials stay in Windscribe’s terminal prompt"
-            enabled: !vpn.busy
-            onRowHovered: root.focusHeader()
-            onRowClicked: vpn.signIn()
+            spacing: Style.space(8)
+
+            BlockButton {
+              width: parent.width
+              label: vpn.signingIn ? "signing in…" : "▶ sign in"
+              primary: !vpn.signingIn
+              enabled: !vpn.busy
+              hasCursor: root.cursorActive && root.focusSection === "header"
+              accessibleName: "Sign in to Windscribe"
+              onActivated: vpn.signIn()
+              onHoverFocus: root.focusHeader()
+            }
+
+            Text {
+              width: parent.width
+              text: "credentials stay in windscribe's terminal prompt"
+              textFormat: Text.PlainText
+              color: root.faintFg
+              font.family: root.contentFontFamily
+              font.pixelSize: root.fzMicro
+            }
           }
 
-          // ── Immediate destinations: pill chips with a leading mark, so
-          // they read as actions — never as navigation. ────────────────────
-          Row {
-            id: quickRow
-            visible: vpn.installed && vpn.loggedIn
+          // ── Hero: destination, tunnel line, the one big action ──────────
+          Column {
+            visible: vpn.installed && (vpn.loggedIn || vpn.connected) && root.tab === "locations"
             width: parent.width
-            spacing: Style.space(6)
-            readonly property real cellWidth: (width - spacing * Math.max(0, root.quickEntries.length - 1))
-              / Math.max(1, root.quickEntries.length)
+            spacing: Style.space(12)
 
-            Repeater {
-              model: root.quickEntries
+            Column {
+              width: parent.width
+              spacing: Style.space(5)
 
-              QuickChip {
-                required property var modelData
-                width: quickRow.cellWidth
-                icon: modelData.kind === "best" ? "󰓾" : "󰋚"
-                label: vpn.markupSafeText(modelData.title)
-                selected: modelData.kind === "recent"
-                  && String(vpn.city).toLowerCase() === String(modelData.city).toLowerCase()
-                enabled: !vpn.busy
-                onActivated: {
-                  if (modelData.kind === "best") vpn.connectBest()
-                  else vpn.connectTo(modelData.target)
+              Text {
+                width: parent.width
+                text: root.heroCityText()
+                textFormat: Text.PlainText
+                color: vpn.connected ? root.fg : root.labelFg
+                font.family: root.contentFontFamily
+                font.pixelSize: root.fzCity
+                font.bold: true
+                font.letterSpacing: -0.3
+                elide: Text.ElideRight
+              }
+
+              Item {
+                width: parent.width
+                implicitHeight: heroMeta.implicitHeight
+
+                Text {
+                  id: heroMeta
+                  anchors.left: parent.left
+                  anchors.right: tunnelLine.left
+                  anchors.rightMargin: Style.space(10)
+                  text: root.heroMetaText()
+                  textFormat: Text.PlainText
+                  color: root.dimFg
+                  font.family: root.contentFontFamily
+                  font.pixelSize: root.fzSmall
+                  elide: Text.ElideRight
+                }
+
+                Text {
+                  id: tunnelLine
+                  anchors.right: parent.right
+                  text: root.tunnelLineText()
+                  textFormat: Text.PlainText
+                  color: root.tunnelSettled && !vpn.tunnelTestPending ? root.accent : root.labelFg
+                  font.family: root.contentFontFamily
+                  font.pixelSize: root.fzSmall
+                  font.letterSpacing: 0.3
+                }
+              }
+            }
+
+            BlockButton {
+              id: connectButton
+              width: parent.width
+              label: root.connectLabel()
+              primary: !vpn.active && !vpn.busy && !vpn.transitional
+              accented: root.tunnelSettled
+              enabled: !vpn.busy
+              hasCursor: root.cursorActive && root.focusSection === "header"
+              accessibleName: root.toggleHint
+              onActivated: vpn.toggle()
+              onHoverFocus: root.focusHeader()
+            }
+
+            // ── down / up / data ──────────────────────────────────────────
+            Item {
+              width: parent.width
+              implicitHeight: Style.space(40)
+
+              Rectangle {
+                anchors.top: parent.top
+                width: parent.width
+                height: 1
+                color: root.hairline
+              }
+
+              Rectangle {
+                anchors.bottom: parent.bottom
+                width: parent.width
+                height: 1
+                color: root.hairline
+              }
+
+              Row {
+                anchors.fill: parent
+                anchors.topMargin: 1
+                anchors.bottomMargin: 1
+
+                Repeater {
+                  model: [
+                    { label: "down", kind: "rx" },
+                    { label: "up", kind: "tx" },
+                    { label: "data", kind: "sum" }
+                  ]
+
+                  Item {
+                    id: statCell
+                    required property var modelData
+                    required property int index
+                    width: parent.width / 3
+                    height: parent.height
+
+                    Rectangle {
+                      visible: statCell.index > 0
+                      anchors.left: parent.left
+                      width: 1
+                      height: parent.height
+                      color: root.hairline
+                    }
+
+                    Column {
+                      anchors.left: parent.left
+                      anchors.leftMargin: statCell.index > 0 ? Style.space(12) : Style.space(2)
+                      anchors.verticalCenter: parent.verticalCenter
+                      spacing: Style.space(3)
+
+                      Text {
+                        text: statCell.modelData.label
+                        textFormat: Text.PlainText
+                        color: root.dimFg
+                        font.family: root.contentFontFamily
+                        font.pixelSize: root.fzMicro
+                        font.letterSpacing: 1
+                      }
+
+                      Text {
+                        text: {
+                          if (!vpn.connected) return "—"
+                          if (statCell.modelData.kind === "rx") return Model.formatRate(vpn.rxRate)
+                          if (statCell.modelData.kind === "tx") return Model.formatRate(vpn.txRate)
+                          return Model.formatBytes(vpn.sessionRx + vpn.sessionTx)
+                        }
+                        textFormat: Text.PlainText
+                        color: vpn.connected ? root.valueFg : root.faintFg
+                        font.family: root.contentFontFamily
+                        font.pixelSize: root.fzRow
+                        font.bold: true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
+            // ── Live traffic wave: 44 bars from the kernel counters ──────
+            Item {
+              width: parent.width
+              implicitHeight: Style.space(16)
+              Accessible.role: Accessible.StaticText
+              Accessible.name: vpn.connected ? "Live traffic activity" : "No tunnel activity"
+
+              Row {
+                id: waveRow
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                spacing: Style.space(2)
+                readonly property real barWidth:
+                  (width - spacing * 43) / 44
+
+                Repeater {
+                  model: 44
+
+                  Rectangle {
+                    id: waveBar
+                    required property int index
+                    readonly property real level: vpn.connected ? root.waveLevels[index] : 0
+                    width: waveRow.barWidth
+                    anchors.bottom: parent.bottom
+                    height: Style.space(2) + level * Style.space(14)
+                    color: !vpn.connected
+                      ? root.hairline
+                      : (level > 0.5 ? root.accent : root.accentDim)
+
+                    Behavior on height {
+                      enabled: root.motionOn
+                      NumberAnimation { duration: 300; easing.type: Easing.OutCubic }
+                    }
+                  }
                 }
               }
             }
           }
 
-          // ── Tabs: one segmented strip, so navigation can't be mistaken
-          // for the action chips above it. ─────────────────────────────────
-          Rectangle {
-            id: tabRow
-            visible: vpn.installed && vpn.loggedIn
+          // ── Status / errors / recovery ──────────────────────────────────
+          Text {
+            visible: vpn.actionStatus !== "" || vpn.lastError !== ""
             width: parent.width
-            implicitHeight: Style.space(30)
-            radius: Style.cornerRadius > 0 ? Style.space(7) : 0
-            color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.035)
-            border.color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.12)
-            border.width: 1
+            text: vpn.actionStatus !== "" ? vpn.actionStatus : vpn.lastError
+            textFormat: Text.PlainText
+            color: vpn.lastError !== "" && vpn.actionStatus === "" ? root.urgentFg : root.dimFg
+            font.family: root.contentFontFamily
+            font.pixelSize: root.fzSmall
+            wrapMode: Text.WordWrap
+          }
 
-            Row {
-              anchors.fill: parent
-              anchors.margins: Style.space(2)
+          Row {
+            id: recoveryRow
+            visible: root.recoveryVisible
+            spacing: Style.space(14)
 
-              TabCell { text: "Locations"; tabKey: "locations"; width: (tabRow.width - Style.space(4)) / 2; height: parent.height }
-              TabCell { text: "Connection"; tabKey: "connection"; width: (tabRow.width - Style.space(4)) / 2; height: parent.height }
+            BracketAction {
+              label: "retry"
+              tone: root.accent
+              enabled: !vpn.busy
+              hasCursor: root.cursorActive && root.focusSection === "recovery" && root.recoveryIndex === 0
+              accessibleName: "Retry connection"
+              onActivated: {
+                root.recoveryIndex = 0
+                root.activateRecovery()
+              }
+              onHoverFocus: root.focusRecovery(0)
+            }
+
+            BracketAction {
+              label: "change protocol"
+              tone: root.labelFg
+              hasCursor: root.cursorActive && root.focusSection === "recovery" && root.recoveryIndex === 1
+              accessibleName: "Change protocol"
+              onActivated: {
+                root.recoveryIndex = 1
+                root.activateRecovery()
+              }
+              onHoverFocus: root.focusRecovery(1)
             }
           }
 
-          // ── Locations ───────────────────────────────────────────────────
-          Column {
+          // ── Search ──────────────────────────────────────────────────────
+          Item {
             visible: vpn.installed && vpn.loggedIn && root.tab === "locations"
             width: parent.width
-            spacing: Style.space(12)
+            implicitHeight: Style.space(30)
 
-            Item {
+            Rectangle {
+              anchors.top: parent.top
               width: parent.width
-              implicitHeight: Math.max(locationHeader.implicitHeight, favoriteSummary.implicitHeight)
-
-              PanelSectionHeader {
-                id: locationHeader
-                text: "Locations"
-                foreground: root.contentForeground
-                fontFamily: root.contentFontFamily
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Text {
-                id: favoriteSummary
-                text: root.favoriteLocations.length === 0
-                  ? (vpn.locations.length > 0 ? vpn.locations.length + " available" : "Search by name")
-                  : root.favoriteLocations.length + (root.favoriteLocations.length === 1 ? " favourite" : " favourites")
-                textFormat: Text.PlainText
-                color: root.dimForeground
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.caption
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-              }
+              height: 1
+              color: root.hairline
             }
 
-            TextField {
-              id: searchField
-              width: parent.width
-              text: root.locationQuery
-              placeholderText: "Search locations"
-              foreground: root.contentForeground
+            Text {
+              id: searchSigil
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.verticalCenterOffset: 1
+              text: "/"
+              textFormat: Text.PlainText
+              color: root.accent
               font.family: root.contentFontFamily
+              font.pixelSize: root.fzMeta
+              font.bold: true
+            }
+
+            TextInput {
+              id: searchField
+              anchors.left: searchSigil.right
+              anchors.leftMargin: Style.space(9)
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.verticalCenterOffset: 1
+              color: root.fg
+              font.family: root.contentFontFamily
+              font.pixelSize: root.fzRow
+              clip: true
+              selectByMouse: true
+              Accessible.role: Accessible.EditableText
+              Accessible.name: "Search locations"
               onTextChanged: {
                 root.locationQuery = text
                 root.locationIndex = 0
@@ -937,7 +1265,11 @@ Panel {
                 root.focusLocation(root.locationIndex)
               }
               Keys.onDownPressed: function(event) {
-                root.focusLocation(Math.min(root.locationIndex + 1, root.visibleEntries.length - 1))
+                // The first Down enters the list on the current match; only
+                // later ones advance it.
+                var step = root.focusSection === "locations" ? 1 : 0
+                root.focusLocation(Math.min(root.locationIndex + step,
+                  Math.max(0, root.visibleEntries.length - 1)))
                 event.accepted = true
               }
               Keys.onUpPressed: function(event) {
@@ -948,50 +1280,70 @@ Panel {
                 text = ""
                 root.focusHeader()
               }
+
+              Text {
+                visible: searchField.text === ""
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: "search all exits…"
+                textFormat: Text.PlainText
+                color: root.dimFg
+                font.family: root.contentFontFamily
+                font.pixelSize: root.fzRow
+              }
             }
+
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.IBeamCursor
+              acceptedButtons: Qt.NoButton
+            }
+          }
+
+          // ── Locations ───────────────────────────────────────────────────
+          Column {
+            visible: vpn.installed && vpn.loggedIn && root.tab === "locations"
+            width: parent.width
+            spacing: Style.space(6)
 
             Text {
               visible: vpn.loadingLocations
               width: parent.width
-              text: "Loading locations…"
+              text: "loading exits…"
               textFormat: Text.PlainText
-              color: root.dimForeground
+              color: root.dimFg
               font.family: root.contentFontFamily
-              font.pixelSize: Style.font.bodySmall
-              horizontalAlignment: Text.AlignHCenter
+              font.pixelSize: root.fzSmall
             }
 
             Text {
               visible: vpn.locationsUnavailable && !vpn.cliOnlyBuild
               width: parent.width
-              text: "Enter a city, region, country code, or nickname."
+              text: "type a city, region, country code, or nickname"
               textFormat: Text.PlainText
-              color: root.dimForeground
+              color: root.dimFg
               font.family: root.contentFontFamily
-              font.pixelSize: Style.font.caption
+              font.pixelSize: root.fzSmall
               wrapMode: Text.WordWrap
             }
 
             Text {
               visible: !vpn.loadingLocations && root.visibleEntries.length === 0
               width: parent.width
-              text: root.locationQuery === ""
-                ? "No locations available"
-                : "No locations found"
+              text: root.locationQuery === "" ? "no exits available" : "no exits match"
               textFormat: Text.PlainText
-              color: root.dimForeground
+              color: root.dimFg
               font.family: root.contentFontFamily
-              font.pixelSize: Style.font.bodySmall
-              horizontalAlignment: Text.AlignHCenter
+              font.pixelSize: root.fzSmall
             }
 
             ListView {
               id: locationList
               visible: root.visibleEntries.length > 0
               width: parent.width
-              height: Math.min(contentHeight, Style.space(260))
+              height: Math.min(contentHeight, Style.space(272))
               clip: true
-              spacing: Style.space(3)
+              spacing: 0
               model: root.visibleEntries
               currentIndex: root.locationIndex
               boundsBehavior: Flickable.StopAtBounds
@@ -1017,8 +1369,8 @@ Panel {
                 required property var modelData
                 required property int index
                 width: locationList.width
-                implicitHeight: Math.max(locationCopy.implicitHeight, favoriteStar.implicitHeight) + Style.space(12)
-                foreground: root.contentForeground
+                implicitHeight: Style.space(26)
+                foreground: root.fg
                 hasCursor: root.cursorActive && root.focusSection === "locations" && root.locationIndex === index
                 Accessible.role: Accessible.Button
                 Accessible.name: (root.entryCurrent(modelData) ? "Current location. " : "")
@@ -1029,7 +1381,7 @@ Panel {
 
                 MouseArea {
                   anchors.fill: parent
-                  anchors.rightMargin: favoriteStar.width + Style.space(12)
+                  anchors.rightMargin: favoriteStar.width + Style.space(6)
                   hoverEnabled: true
                   cursorShape: vpn.busy ? Qt.ArrowCursor : Qt.PointingHandCursor
                   enabled: !vpn.busy
@@ -1037,620 +1389,672 @@ Panel {
                   onClicked: root.activateEntry(locationRow.modelData)
                 }
 
-                Column {
-                  id: locationCopy
+                Text {
+                  id: rowIndex
                   anchors.left: parent.left
-                  anchors.leftMargin: Style.space(12)
-                  anchors.right: currentMark.left
+                  anchors.leftMargin: Style.space(2)
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(20)
+                  text: root.rowIndexLabel(locationRow.index)
+                  textFormat: Text.PlainText
+                  color: root.faintFg
+                  font.family: root.contentFontFamily
+                  font.pixelSize: root.fzSmall
+                }
+
+                Text {
+                  id: rowSlug
+                  anchors.left: rowIndex.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Math.min(implicitWidth, parent.width - rowIndex.width - rowRight.width - Style.space(20))
+                  text: root.entrySlug(locationRow.modelData)
+                  textFormat: Text.PlainText
+                  color: root.entryCurrent(locationRow.modelData)
+                    ? root.accent
+                    : (locationRow.modelData.kind === "best"
+                        || (root.entryStarable(locationRow.modelData)
+                            && root.isFavorite(root.entryTarget(locationRow.modelData)))
+                        ? root.fg
+                        : root.rowFg)
+                  font.family: root.contentFontFamily
+                  font.pixelSize: root.fzRow
+                  font.bold: locationRow.modelData.kind === "best"
+                    || root.entryCurrent(locationRow.modelData)
+                    || (root.entryStarable(locationRow.modelData)
+                        && root.isFavorite(root.entryTarget(locationRow.modelData)))
+                  elide: Text.ElideRight
+                }
+
+                Text {
+                  anchors.left: rowSlug.right
+                  anchors.leftMargin: Style.space(8)
+                  anchors.right: rowRight.left
                   anchors.rightMargin: Style.space(8)
                   anchors.verticalCenter: parent.verticalCenter
-                  spacing: Style.space(1)
-
-                  Text {
-                    width: parent.width
-                    text: root.entryTitle(locationRow.modelData)
-                    textFormat: Text.PlainText
-                    color: root.contentForeground
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.body
-                    font.bold: locationRow.modelData.kind === "best"
-                      || (root.entryStarable(locationRow.modelData)
-                          && root.isFavorite(root.entryTarget(locationRow.modelData)))
-                    elide: Text.ElideRight
-                  }
-
-                  Text {
-                    visible: text !== ""
-                    width: parent.width
-                    text: root.entrySubtitle(locationRow.modelData)
-                    textFormat: Text.PlainText
-                    color: root.dimForeground
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.caption
-                    elide: Text.ElideRight
-                  }
-                }
-
-                Text {
-                  id: currentMark
-                  anchors.right: favoriteStar.left
-                  anchors.rightMargin: Style.space(12)
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: root.entryCurrent(locationRow.modelData) ? "●" : ""
+                  text: root.entryMeta(locationRow.modelData)
                   textFormat: Text.PlainText
-                  color: Color.accent
+                  color: root.faintFg
                   font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.caption
+                  font.pixelSize: root.fzSmall
+                  elide: Text.ElideRight
                 }
 
-                Text {
-                  id: favoriteStar
-                  width: Style.space(34)
+                Row {
+                  id: rowRight
                   anchors.right: parent.right
-                  anchors.rightMargin: Style.space(6)
                   anchors.verticalCenter: parent.verticalCenter
-                  text: locationRow.modelData.kind === "best"
-                    ? "󰒋"
-                    : (root.isFavorite(root.entryTarget(locationRow.modelData)) ? "★" : "☆")
-                  textFormat: Text.PlainText
-                  color: root.entryStarable(locationRow.modelData)
-                      && root.isFavorite(root.entryTarget(locationRow.modelData))
-                    ? Color.accent
-                    : root.dimForeground
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.title
-                  horizontalAlignment: Text.AlignHCenter
-                  Accessible.role: Accessible.Button
-                  Accessible.ignored: !root.entryStarable(locationRow.modelData)
-                  Accessible.focusable: root.entryStarable(locationRow.modelData)
-                  Accessible.focused: false
-                  Accessible.name: root.entryStarable(locationRow.modelData)
-                    ? (root.isFavorite(root.entryTarget(locationRow.modelData))
-                        ? "Remove from Favourites"
-                        : "Add to Favourites")
-                    : ""
-                  Accessible.onPressAction: {
-                    if (root.entryStarable(locationRow.modelData))
-                      root.toggleFavorite(root.entryTarget(locationRow.modelData))
+                  spacing: Style.space(7)
+
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: text !== ""
+                    text: root.entryBadge(locationRow.modelData)
+                    textFormat: Text.PlainText
+                    color: locationRow.modelData.kind === "best" || locationRow.modelData.tenGbps
+                      ? root.accent
+                      : root.dimFg
+                    font.family: root.contentFontFamily
+                    font.pixelSize: root.fzSmall
                   }
 
-                  MouseArea {
-                    anchors.fill: parent
-                    enabled: root.entryStarable(locationRow.modelData)
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onEntered: root.focusLocation(locationRow.index)
-                    onClicked: root.toggleFavorite(root.entryTarget(locationRow.modelData))
+                  Text {
+                    id: favoriteStar
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(14)
+                    horizontalAlignment: Text.AlignHCenter
+                    text: locationRow.modelData.kind === "best"
+                      ? " "
+                      : (root.isFavorite(root.entryTarget(locationRow.modelData)) ? "*" : "·")
+                    textFormat: Text.PlainText
+                    color: root.entryStarable(locationRow.modelData)
+                        && root.isFavorite(root.entryTarget(locationRow.modelData))
+                      ? root.accent
+                      : root.faintFg
+                    font.family: root.contentFontFamily
+                    font.pixelSize: root.fzRow
+                    font.bold: true
+                    Accessible.role: Accessible.Button
+                    Accessible.ignored: !root.entryStarable(locationRow.modelData)
+                    Accessible.focusable: root.entryStarable(locationRow.modelData)
+                    Accessible.focused: false
+                    Accessible.name: root.entryStarable(locationRow.modelData)
+                      ? (root.isFavorite(root.entryTarget(locationRow.modelData))
+                          ? "Remove from Favourites"
+                          : "Add to Favourites")
+                      : ""
+                    Accessible.onPressAction: {
+                      if (root.entryStarable(locationRow.modelData))
+                        root.toggleFavorite(root.entryTarget(locationRow.modelData))
+                    }
+
+                    MouseArea {
+                      anchors.fill: parent
+                      anchors.margins: -Style.space(4)
+                      enabled: root.entryStarable(locationRow.modelData)
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      onEntered: root.focusLocation(locationRow.index)
+                      onClicked: root.toggleFavorite(root.entryTarget(locationRow.modelData))
+                    }
                   }
                 }
               }
             }
           }
 
-          // ── Connection ──────────────────────────────────────────────────
+          // ── Settings ────────────────────────────────────────────────────
           Column {
             visible: vpn.installed && vpn.loggedIn && root.tab === "connection"
             width: parent.width
-            spacing: Style.space(10)
+            spacing: Style.space(4)
 
-            PanelSectionHeader {
-              text: "Connection"
-              foreground: root.contentForeground
-              fontFamily: root.contentFontFamily
-            }
+            SectionLabel { text: "connection" }
 
-            ToggleRow {
+            SettingRow {
               id: firewallControl
               width: parent.width
-              title: "Firewall"
-              subtitle: vpn.firewallLocked
-                ? "Always On is locked by Windscribe"
-                : "Blocks traffic outside the VPN"
-              stateText: vpn.firewall === "" ? "Checking" : vpn.markupSafeText(vpn.firewall)
-              checked: vpn.firewallOn
-              busy: vpn.busy
-              interactive: !vpn.firewallLocked
+              label: "firewall"
+              valueText: vpn.firewall === ""
+                ? "[ … ]"
+                : (vpn.firewallLocked ? "[ always ]" : (vpn.firewallOn ? "[ on ]" : "[ off ]"))
+              valueColor: vpn.firewallOn ? root.accent : root.dimFg
+              valueBold: true
+              interactive: !vpn.firewallLocked && !vpn.busy
               hasCursor: root.connectionHasCursor("firewall")
+              accessibleRole: Accessible.CheckBox
+              accessibleName: "Firewall"
+              accessibleChecked: vpn.firewallOn
+              onRowClicked: if (!vpn.firewallLocked) vpn.setFirewall(!vpn.firewallOn)
               onRowHovered: root.focusConnectionKey("firewall")
-              onRowToggled: vpn.setFirewall(!vpn.firewallOn)
             }
 
-            SearchableDropdown {
+            DropdownRow {
               id: protocolPicker
               width: parent.width
-              showLabel: true
-              label: "Preferred Protocol"
-              placeholderText: "Choose a protocol"
-              triggerLabel: "Automatic"
-              foreground: root.contentForeground
-              fontFamily: root.contentFontFamily
+              key: "protocol"
+              label: "preferred protocol"
+              valueText: root.protocolValueText()
               options: root.protocolOptions
-              value: root.selectedProtocolBase
-              hasCursor: root.connectionHasCursor("protocol")
-              onHovered: function(on) { if (on) root.focusConnectionKey("protocol") }
-              onChanged: function(v) {
-                root.persistSetting("preferredProtocol", v)
-                vpn.refreshPorts(v)
-              }
+              currentValue: root.selectedProtocolBase
             }
 
-            SearchableDropdown {
+            DropdownRow {
               id: portPicker
               visible: root.selectedProtocolBase !== ""
               width: parent.width
-              showLabel: true
-              label: "Port"
-              placeholderText: vpn.loadingPorts ? "Loading ports…" : "Choose a port"
-              triggerLabel: "Automatic"
-              foreground: root.contentForeground
-              fontFamily: root.contentFontFamily
+              key: "port"
+              label: vpn.loadingPorts ? "port · loading…" : "port"
+              valueText: root.portValueText()
               options: root.portOptions
-              value: root.selectedProtocolPort
-              hasCursor: root.connectionHasCursor("port")
-              onHovered: function(on) { if (on) root.focusConnectionKey("port") }
-              onChanged: function(v) {
-                var next = root.selectedProtocolBase + (v === "" ? "" : ":" + v)
-                root.persistSetting("preferredProtocol", next)
-              }
+              currentValue: root.selectedProtocolPort
+            }
+
+            SettingRow {
+              id: alertsControl
+              width: parent.width
+              label: "connection alerts"
+              valueText: vpn.notificationsOn ? "[ on ]" : "[ off ]"
+              valueColor: vpn.notificationsOn ? root.accent : root.dimFg
+              valueBold: true
+              hasCursor: root.connectionHasCursor("notifications")
+              accessibleRole: Accessible.CheckBox
+              accessibleName: "Connection alerts"
+              accessibleChecked: vpn.notificationsOn
+              onRowClicked: root.persistSetting("notifications", !vpn.notificationsOn)
+              onRowHovered: root.focusConnectionKey("notifications")
+            }
+
+            SettingRow {
+              id: motionControl
+              width: parent.width
+              label: "interface motion"
+              valueText: root.motionOn ? "[ on ]" : "[ off ]"
+              valueColor: root.motionOn ? root.accent : root.dimFg
+              valueBold: true
+              hasCursor: root.connectionHasCursor("motion")
+              accessibleRole: Accessible.CheckBox
+              accessibleName: "Interface motion"
+              accessibleChecked: root.motionOn
+              onRowClicked: root.persistSetting("motion", !root.motionOn)
+              onRowHovered: root.focusConnectionKey("motion")
             }
 
             Text {
               width: parent.width
-              text: "Used on your next connection."
+              topPadding: Style.space(4)
+              text: "protocol & port apply on next connect"
               textFormat: Text.PlainText
-              color: root.dimForeground
+              color: root.faintFg
               font.family: root.contentFontFamily
-              font.pixelSize: Style.font.caption
+              font.pixelSize: root.fzMicro
             }
 
-            ToggleRow {
-              id: alertsControl
+            SectionLabel {
+              text: "general"
+              topPadding: Style.space(14)
+            }
+
+            SettingRow {
               width: parent.width
-              title: "Connection alerts"
-              subtitle: "Connections and unexpected drops"
-              checked: vpn.notificationsOn
-              hasCursor: root.connectionHasCursor("notifications")
-              onRowHovered: root.focusConnectionKey("notifications")
-              onRowToggled: root.persistSetting("notifications", !vpn.notificationsOn)
+              label: "appearance"
+              valueText: "omarchy theme"
+              valueColor: root.valueFg
+              interactive: false
+              accessibleName: "Appearance follows the Omarchy theme"
             }
 
-            ToggleRow {
-              id: motionControl
+            SettingRow {
+              visible: vpn.dataUsage !== ""
               width: parent.width
-              title: "Interface motion"
-              subtitle: "Tunnel flow and state transitions"
-              checked: root.motionOn
-              hasCursor: root.connectionHasCursor("motion")
-              onRowHovered: root.focusConnectionKey("motion")
-              onRowToggled: root.persistSetting("motion", !root.motionOn)
+              label: "data allowance"
+              valueText: vpn.markupSafeText(vpn.dataUsage).toLowerCase()
+              valueColor: !vpn.usage.unlimited && vpn.usage.fraction > 0.9
+                ? root.urgentFg
+                : root.valueFg
+              interactive: false
+              accessibleName: "Data allowance " + vpn.markupSafeText(vpn.dataUsage)
             }
 
-            ActionRow {
+            SettingRow {
               id: rotateAction
               visible: vpn.connected && vpn.ipIsVpn
               width: parent.width
-              icon: "󰑓"
-              title: vpn.pendingLabel === "Rotating IP…" ? "Rotating IP…" : "Rotate IP"
-              subtitle: "New address, same location"
-              enabled: !vpn.busy
+              label: "rotate ip"
+              valueText: vpn.pendingLabel === "Rotating IP…" ? "[ rotating… ]" : "[ rotate ]"
+              valueColor: root.rowFg
+              valueBold: true
+              interactive: !vpn.busy
               hasCursor: root.connectionHasCursor("rotate")
-              onRowHovered: root.focusConnectionKey("rotate")
+              accessibleName: "Rotate IP"
               onRowClicked: vpn.rotateIp()
+              onRowHovered: root.focusConnectionKey("rotate")
             }
 
-            ActionRow {
+            SettingRow {
               id: updateAction
               visible: vpn.updateAvailable !== ""
               width: parent.width
-              icon: "󰚰"
-              title: vpn.updating ? "Updating Windscribe…" : "Update Windscribe"
-              subtitle: vpn.updateAvailable === "" ? "" : "Version " + vpn.markupSafeText(vpn.updateAvailable)
-              enabled: !vpn.busy
+              label: "update available"
+              valueText: vpn.updating
+                ? "[ updating… ]"
+                : "[ " + vpn.markupSafeText(vpn.updateAvailable).toLowerCase() + " ]"
+              valueColor: root.accent
+              valueBold: true
+              interactive: !vpn.busy
               hasCursor: root.connectionHasCursor("update")
-              onRowHovered: root.focusConnectionKey("update")
+              accessibleName: "Update Windscribe to " + vpn.markupSafeText(vpn.updateAvailable)
               onRowClicked: vpn.updateCli()
+              onRowHovered: root.focusConnectionKey("update")
             }
 
-            // ── Data allowance: plan usage with a quiet meter ─────────────
-            Column {
-              visible: vpn.dataUsage !== ""
+            SettingRow {
               width: parent.width
-              spacing: Style.space(6)
-
-              Item {
-                width: parent.width
-                implicitHeight: Math.max(allowanceTitle.implicitHeight, allowanceValue.implicitHeight)
-
-                Text {
-                  id: allowanceTitle
-                  anchors.left: parent.left
-                  anchors.leftMargin: Style.space(12)
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: "Data allowance"
-                  textFormat: Text.PlainText
-                  color: root.contentForeground
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.body
-                  font.bold: true
-                }
-
-                Text {
-                  id: allowanceValue
-                  anchors.right: parent.right
-                  anchors.rightMargin: Style.space(10)
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: vpn.markupSafeText(vpn.dataUsage)
-                  textFormat: Text.PlainText
-                  color: !vpn.usage.unlimited && vpn.usage.fraction > 0.9
-                    ? root.urgentForeground
-                    : root.dimForeground
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.caption
-                }
-              }
-
-              Rectangle {
-                visible: !vpn.usage.unlimited
-                x: Style.space(12)
-                width: parent.width - Style.space(22)
-                height: 3
-                radius: 1.5
-                color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.14)
-
-                Rectangle {
-                  width: parent.width * Math.max(0, Math.min(1, vpn.usage.fraction))
-                  height: parent.height
-                  radius: parent.radius
-                  color: vpn.usage.fraction > 0.9 ? root.urgentForeground : Color.accent
-
-                  Behavior on width {
-                    NumberAnimation { duration: root.motionOn ? 220 : 0; easing.type: Easing.OutCubic }
-                  }
-                }
-              }
+              label: "account"
+              valueText: vpn.loginState === "" ? "checking" : root.lcText(vpn.loginState)
+              valueColor: root.valueFg
+              interactive: false
+              accessibleName: "Account " + vpn.markupSafeText(vpn.loginState)
             }
 
-            PanelSeparator { foreground: root.contentForeground }
-
-            Item {
-              width: parent.width
-              implicitHeight: Math.max(accountHeader.implicitHeight, accountState.implicitHeight)
-
-              PanelSectionHeader {
-                id: accountHeader
-                text: "Account"
-                foreground: root.contentForeground
-                fontFamily: root.contentFontFamily
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Text {
-                id: accountState
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                text: vpn.markupSafeText(vpn.loginState === "" ? "Checking" : vpn.loginState)
-                textFormat: Text.PlainText
-                color: root.dimForeground
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.caption
-              }
-            }
-
-            ActionRow {
+            SettingRow {
               id: signOutAction
               width: parent.width
-              icon: "󰍃"
-              title: root.signOutArmed ? "Confirm sign out" : "Sign out"
-              subtitle: vpn.firewallOn ? "Disconnects; Firewall stays on" : "Disconnect and sign out"
-              enabled: !vpn.busy
+              label: "sign out"
+              valueText: root.signOutArmed ? "[ confirm ]" : "[ sign out ]"
+              valueColor: root.signOutArmed ? root.urgentFg : root.rowFg
+              valueBold: true
+              interactive: !vpn.busy
               hasCursor: root.connectionHasCursor("signout")
-              onRowHovered: root.focusConnectionKey("signout")
+              accessibleName: root.signOutArmed ? "Confirm sign out" : "Sign out"
               onRowClicked: {
                 root.focusConnectionKey("signout")
                 root.activateConnection()
               }
+              onRowHovered: root.focusConnectionKey("signout")
+            }
+
+            Text {
+              width: parent.width
+              topPadding: Style.space(4)
+              text: vpn.firewallOn ? "sign-out keeps the firewall up" : " "
+              textFormat: Text.PlainText
+              color: root.faintFg
+              font.family: root.contentFontFamily
+              font.pixelSize: root.fzMicro
             }
           }
 
-          Text {
+          // ── Footer keys ─────────────────────────────────────────────────
+          Item {
             visible: vpn.installed && vpn.loggedIn
             width: parent.width
-            text: root.tab === "locations"
-              ? "J/K move · Enter connect · F favourite · / search\n←/→ tab · T tunnel · R refresh"
-              : "J/K move · Enter change · W Firewall\n←/→ tab · T tunnel · R refresh"
-            textFormat: Text.PlainText
-            color: root.dimForeground
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
+            implicitHeight: Style.space(24)
+
+            Rectangle {
+              anchors.top: parent.top
+              width: parent.width
+              height: 1
+              color: root.hairline
+            }
+
+            Row {
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.verticalCenterOffset: 2
+              spacing: Style.space(14)
+
+              KeyHint { hint: root.tab === "locations" ? "↵ connect" : "↑↓ move" }
+              KeyHint { hint: root.tab === "locations" ? "f favourite" : "↵ change" }
+              KeyHint {
+                visible: root.tab === "locations"
+                hint: "/ search"
+                clickable: true
+                onActivated: {
+                  root.setTab("locations")
+                  Qt.callLater(root.focusSearch)
+                }
+              }
+              KeyHint {
+                hint: root.tab === "locations" ? "s settings" : "s back"
+                clickable: true
+                onActivated: root.cycleTab(1)
+              }
+              KeyHint { hint: root.tab === "locations" ? "esc close" : "esc back" }
+            }
           }
         }
       }
     }
   }
 
-  component TabCell: Item {
-    id: cell
-    property string tabKey: ""
-    property string text: ""
-    readonly property bool active: root.tab === tabKey
-    Accessible.role: Accessible.PageTab
-    Accessible.name: text
-    Accessible.selected: active
+  // A 1px dashed or dotted rule — the design's leader lines. Drawn with
+  // fillRect segments because Context2D's setLineDash is unreliable.
+  component Leader: Canvas {
+    id: leader
+    property color lineColor: root.leaderLine
+    property bool dotted: false
+    height: 1
+    onPaint: {
+      var ctx = getContext("2d")
+      ctx.clearRect(0, 0, width, height)
+      ctx.fillStyle = String(leader.lineColor)
+      var dash = leader.dotted ? 1 : 3
+      var gap = 3
+      for (var x = 0; x < width; x += dash + gap)
+        ctx.fillRect(x, 0, Math.min(dash, width - x), 1)
+    }
+    onWidthChanged: requestPaint()
+    onLineColorChanged: requestPaint()
+    onDottedChanged: requestPaint()
+  }
+
+  // The one big action. Filled with the foreground when it is the primary
+  // move; a quiet accent outline while the tunnel is up.
+  component BlockButton: Rectangle {
+    id: block
+    property string label: ""
+    property bool primary: false
+    property bool accented: false
+    property bool hasCursor: false
+    property string accessibleName: label
+    signal activated()
+    signal hoverFocus()
+
+    implicitHeight: Style.space(38)
+    radius: 0
+    color: block.primary && block.enabled ? root.fg : "transparent"
+    border.width: 1
+    border.color: {
+      if (block.primary && block.enabled) return root.fg
+      if (block.accented) return block.hasCursor || blockArea.containsMouse ? root.accent : root.accentDim
+      return block.hasCursor || blockArea.containsMouse ? root.labelFg : root.leaderLine
+    }
+    opacity: enabled ? 1.0 : 0.85
+    Accessible.role: Accessible.Button
+    Accessible.name: accessibleName
     Accessible.focusable: true
-    Accessible.onPressAction: root.setTab(tabKey)
-
-    Rectangle {
-      anchors.fill: parent
-      radius: Style.cornerRadius > 0 ? Style.space(5) : 0
-      color: cell.active
-        ? Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.10)
-        : (cellArea.containsMouse
-            ? Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.05)
-            : "transparent")
-    }
-
-    // The active tab carries a small accent tick — state you can read from
-    // across the room, in any theme.
-    Rectangle {
-      visible: cell.active
-      anchors.horizontalCenter: parent.horizontalCenter
-      anchors.bottom: parent.bottom
-      anchors.bottomMargin: Style.space(3)
-      width: Style.space(16)
-      height: 2
-      radius: 1
-      color: Color.accent
-    }
+    Accessible.focused: hasCursor
+    Accessible.onPressAction: if (block.enabled) block.activated()
 
     Text {
       anchors.centerIn: parent
-      anchors.verticalCenterOffset: -1
-      text: cell.text
+      text: block.label
       textFormat: Text.PlainText
-      color: cell.active ? root.contentForeground : root.dimForeground
+      color: block.primary && block.enabled
+        ? root.inverseFg
+        : (block.accented ? root.accent : root.labelFg)
       font.family: root.contentFontFamily
-      font.pixelSize: Style.font.bodySmall
-      font.bold: cell.active
+      font.pixelSize: root.fzMeta
+      font.bold: true
+      font.letterSpacing: 2
     }
 
     MouseArea {
-      id: cellArea
+      id: blockArea
       anchors.fill: parent
       hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onClicked: root.setTab(cell.tabKey)
+      enabled: block.enabled
+      cursorShape: block.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onEntered: block.hoverFocus()
+      onClicked: block.activated()
     }
   }
 
-  component QuickChip: Rectangle {
-    id: chip
-    property string icon: ""
+  // "[ retry ]"-style inline action.
+  component BracketAction: CursorSurface {
+    id: bracket
     property string label: ""
-    property bool selected: false
+    property color tone: root.rowFg
+    property string accessibleName: label
     signal activated()
+    signal hoverFocus()
 
-    implicitHeight: chipRow.implicitHeight + Style.space(12)
-    radius: height / 2
-    color: chip.selected
-      ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.13)
-      : (chipArea.containsMouse && chip.enabled
-          ? Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.09)
-          : Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.045))
-    border.color: chip.selected
-      ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.55)
-      : Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.13)
-    border.width: 1
-    opacity: enabled ? 1.0 : 0.55
+    foreground: root.fg
+    implicitWidth: bracketText.implicitWidth + Style.space(8)
+    implicitHeight: Style.space(22)
+    opacity: enabled ? 1.0 : 0.6
     Accessible.role: Accessible.Button
-    Accessible.name: label
-    Accessible.focusable: true
-    Accessible.onPressAction: if (chip.enabled) chip.activated()
-
-    Row {
-      id: chipRow
-      anchors.centerIn: parent
-      spacing: Style.space(6)
-
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        text: chip.icon
-        textFormat: Text.PlainText
-        color: chip.selected ? Color.accent : root.dimForeground
-        font.family: root.contentFontFamily
-        font.pixelSize: Style.font.bodySmall
-      }
-
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        width: Math.min(implicitWidth, chip.width - Style.space(38))
-        text: chip.label
-        textFormat: Text.PlainText
-        color: root.contentForeground
-        font.family: root.contentFontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: chip.selected
-        elide: Text.ElideRight
-      }
-    }
-
-    MouseArea {
-      id: chipArea
-      anchors.fill: parent
-      hoverEnabled: true
-      enabled: chip.enabled
-      cursorShape: chip.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-      onClicked: chip.activated()
-    }
-  }
-
-  component ToggleRow: CursorSurface {
-    id: toggleRow
-    property string title: ""
-    property string subtitle: ""
-    property string stateText: ""
-    property bool checked: false
-    property bool busy: false
-    property bool interactive: true
-    signal rowToggled()
-    signal rowHovered()
-
-    foreground: root.contentForeground
-    implicitHeight: toggleCopy.implicitHeight + Style.space(14)
-    opacity: interactive ? 1.0 : 0.72
-    Accessible.role: Accessible.CheckBox
-    Accessible.name: title
-    Accessible.checkable: true
-    Accessible.checked: checked
+    Accessible.name: accessibleName
     Accessible.focusable: true
     Accessible.focused: hasCursor
-    Accessible.onPressAction: {
-      if (toggleRow.interactive && !toggleRow.busy) toggleRow.rowToggled()
-    }
-    Accessible.onToggleAction: {
-      if (toggleRow.interactive && !toggleRow.busy) toggleRow.rowToggled()
+    Accessible.onPressAction: if (bracket.enabled) bracket.activated()
+
+    Text {
+      id: bracketText
+      anchors.centerIn: parent
+      text: "[ " + bracket.label + " ]"
+      textFormat: Text.PlainText
+      color: bracket.tone
+      font.family: root.contentFontFamily
+      font.pixelSize: root.fzMeta
+      font.bold: true
     }
 
     MouseArea {
       anchors.fill: parent
       hoverEnabled: true
-      enabled: toggleRow.interactive && !toggleRow.busy
-      cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-      onEntered: toggleRow.rowHovered()
-      onClicked: toggleRow.rowToggled()
-    }
-
-    Column {
-      id: toggleCopy
-      anchors.left: parent.left
-      anchors.right: toggleState.left
-      anchors.leftMargin: Style.space(12)
-      anchors.rightMargin: Style.space(10)
-      anchors.verticalCenter: parent.verticalCenter
-      spacing: Style.space(2)
-
-      Text {
-        width: parent.width
-        text: toggleRow.title
-        textFormat: Text.PlainText
-        color: root.contentForeground
-        font.family: root.contentFontFamily
-        font.pixelSize: Style.font.body
-        font.bold: true
-        elide: Text.ElideRight
-      }
-
-      Text {
-        width: parent.width
-        visible: toggleRow.subtitle !== ""
-        text: toggleRow.subtitle
-        textFormat: Text.PlainText
-        color: root.dimForeground
-        font.family: root.contentFontFamily
-        font.pixelSize: Style.font.caption
-        elide: Text.ElideRight
-      }
-    }
-
-    Row {
-      id: toggleState
-      anchors.right: parent.right
-      anchors.rightMargin: Style.space(10)
-      anchors.verticalCenter: parent.verticalCenter
-      spacing: Style.space(8)
-
-      Text {
-        visible: toggleRow.stateText !== ""
-        anchors.verticalCenter: parent.verticalCenter
-        text: toggleRow.stateText
-        textFormat: Text.PlainText
-        color: root.dimForeground
-        font.family: root.contentFontFamily
-        font.pixelSize: Style.font.caption
-      }
-
-      ToggleSwitch {
-        anchors.verticalCenter: parent.verticalCenter
-        checked: toggleRow.checked
-        busy: toggleRow.busy
-        interactive: false
-        foreground: root.contentForeground
-      }
+      enabled: bracket.enabled
+      cursorShape: bracket.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onEntered: bracket.hoverFocus()
+      onClicked: bracket.activated()
     }
   }
 
-  component ActionRow: CursorSurface {
-    id: actionRow
-    property string icon: ""
-    property string title: ""
-    property string subtitle: ""
+  component SectionLabel: Text {
+    textFormat: Text.PlainText
+    color: root.faintFg
+    font.family: root.contentFontFamily
+    font.pixelSize: root.fzMicro
+    font.letterSpacing: 1.5
+    bottomPadding: Style.space(4)
+  }
+
+  // label ····· value — the settings grammar. Toggles and actions render
+  // their state as "[ on ]" bracket text.
+  component SettingRow: CursorSurface {
+    id: srow
+    property string label: ""
+    property string valueText: ""
+    property color valueColor: root.valueFg
+    property bool valueBold: false
+    property bool interactive: true
+    property int accessibleRole: Accessible.Button
+    property string accessibleName: label
+    property bool accessibleChecked: false
     signal rowClicked()
     signal rowHovered()
 
-    foreground: root.contentForeground
-    implicitHeight: actionContent.implicitHeight + Style.space(14)
-    opacity: enabled ? 1.0 : 0.55
-    Accessible.role: Accessible.Button
-    Accessible.name: title
-    Accessible.focusable: true
+    foreground: root.fg
+    implicitHeight: Style.space(26)
+    Accessible.role: interactive ? accessibleRole : Accessible.StaticText
+    Accessible.name: accessibleName
+    Accessible.checkable: accessibleRole === Accessible.CheckBox
+    Accessible.checked: accessibleChecked
+    Accessible.focusable: interactive
     Accessible.focused: hasCursor
-    Accessible.onPressAction: if (actionRow.enabled) actionRow.rowClicked()
+    Accessible.onPressAction: if (srow.interactive) srow.rowClicked()
+    Accessible.onToggleAction: if (srow.interactive) srow.rowClicked()
 
     MouseArea {
       anchors.fill: parent
       hoverEnabled: true
-      enabled: actionRow.enabled
-      cursorShape: actionRow.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-      onEntered: actionRow.rowHovered()
-      onClicked: actionRow.rowClicked()
+      enabled: srow.interactive
+      cursorShape: srow.interactive ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onEntered: srow.rowHovered()
+      // A click anywhere else while a menu is open dismisses it first.
+      onClicked: {
+        if (root.ddOpen !== "") root.ddOpen = ""
+        else srow.rowClicked()
+      }
     }
 
-    Row {
-      id: actionContent
+    Text {
+      id: srowLabel
       anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.leftMargin: Style.space(12)
-      anchors.rightMargin: Style.space(12)
       anchors.verticalCenter: parent.verticalCenter
-      spacing: Style.space(10)
+      text: srow.label
+      textFormat: Text.PlainText
+      color: root.labelFg
+      font.family: root.contentFontFamily
+      font.pixelSize: root.fzMeta
+    }
 
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        text: actionRow.icon
-        textFormat: Text.PlainText
-        color: root.contentForeground
-        font.family: root.contentFontFamily
-        font.pixelSize: Style.font.title
-      }
+    Leader {
+      anchors.left: srowLabel.right
+      anchors.leftMargin: Style.space(9)
+      anchors.right: srowValue.left
+      anchors.rightMargin: Style.space(9)
+      anchors.verticalCenter: parent.verticalCenter
+      dotted: true
+      lineColor: root.hairline
+    }
+
+    Text {
+      id: srowValue
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      text: srow.valueText
+      textFormat: Text.PlainText
+      color: srow.valueColor
+      font.family: root.contentFontFamily
+      font.pixelSize: root.fzMeta
+      font.bold: srow.valueBold
+    }
+  }
+
+  // A SettingRow with an in-panel dropdown menu, keyboard first.
+  component DropdownRow: Item {
+    id: dd
+    property string key: ""
+    property string label: ""
+    property string valueText: ""
+    property var options: []
+    property string currentValue: ""
+    readonly property bool popupOpen: root.ddOpen === dd.key
+
+    // The open menu takes part in layout, so the panel grows around it and
+    // nothing below it is overpainted or clipped.
+    implicitHeight: ddRow.implicitHeight + (popupOpen ? ddPopup.height + Style.space(2) : 0)
+    z: popupOpen ? 20 : 0
+
+    SettingRow {
+      id: ddRow
+      width: dd.width
+      label: dd.label
+      valueText: dd.valueText + " ▾"
+      valueColor: root.valueFg
+      interactive: true
+      hasCursor: root.connectionHasCursor(dd.key)
+      accessibleName: dd.label + ". " + dd.valueText
+      onRowClicked: root.toggleDropdown(dd.key)
+      onRowHovered: root.focusConnectionKey(dd.key)
+    }
+
+    Rectangle {
+      id: ddPopup
+      visible: dd.popupOpen
+      anchors.right: parent.right
+      y: ddRow.height + Style.space(2)
+      width: Style.space(170)
+      implicitHeight: ddColumn.implicitHeight + Style.space(8)
+      color: root.inverseFg
+      border.width: 1
+      border.color: root.leaderLine
+      radius: 0
 
       Column {
-        width: parent.width - x
-        spacing: Style.space(2)
+        id: ddColumn
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.topMargin: Style.space(4)
 
-        Text {
-          width: parent.width
-          text: actionRow.title
-          textFormat: Text.PlainText
-          color: root.contentForeground
-          font.family: root.contentFontFamily
-          font.pixelSize: Style.font.body
-          font.bold: true
-          elide: Text.ElideRight
-        }
+        Repeater {
+          model: dd.options
 
-        Text {
-          width: parent.width
-          visible: actionRow.subtitle !== ""
-          text: actionRow.subtitle
-          textFormat: Text.PlainText
-          color: root.dimForeground
-          font.family: root.contentFontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
+          Item {
+            id: ddOption
+            required property var modelData
+            required property int index
+            readonly property bool selected: modelData.value === dd.currentValue
+            width: ddColumn.width
+            implicitHeight: Style.space(22)
+            Accessible.role: Accessible.ListItem
+            Accessible.name: modelData.label
+            Accessible.selected: selected
+            Accessible.focusable: true
+            Accessible.onPressAction: root.pickDropdown(ddOption.modelData.value)
+
+            Rectangle {
+              anchors.fill: parent
+              color: root.ddIndex === ddOption.index || ddOptionArea.containsMouse
+                ? Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.08)
+                : "transparent"
+            }
+
+            Text {
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(10)
+              anchors.verticalCenter: parent.verticalCenter
+              text: ddOption.modelData.label
+              textFormat: Text.PlainText
+              color: ddOption.selected ? root.fg : root.labelFg
+              font.family: root.contentFontFamily
+              font.pixelSize: root.fzMeta
+              font.bold: ddOption.selected
+            }
+
+            Text {
+              visible: ddOption.selected
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(10)
+              anchors.verticalCenter: parent.verticalCenter
+              text: "«"
+              textFormat: Text.PlainText
+              color: root.accent
+              font.family: root.contentFontFamily
+              font.pixelSize: root.fzMeta
+              font.bold: true
+            }
+
+            MouseArea {
+              id: ddOptionArea
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onEntered: root.ddIndex = ddOption.index
+              onClicked: root.pickDropdown(ddOption.modelData.value)
+            }
+          }
         }
       }
+    }
+  }
+
+  component KeyHint: Text {
+    id: hintText
+    property string hint: ""
+    property bool clickable: false
+    signal activated()
+
+    text: hint
+    textFormat: Text.PlainText
+    color: clickable && hintArea.containsMouse ? root.labelFg : root.faintFg
+    font.family: root.contentFontFamily
+    font.pixelSize: root.fzMicro
+    Accessible.role: clickable ? Accessible.Button : Accessible.StaticText
+    Accessible.name: hint
+    Accessible.focusable: clickable
+    Accessible.onPressAction: if (hintText.clickable) hintText.activated()
+
+    MouseArea {
+      id: hintArea
+      anchors.fill: parent
+      anchors.margins: -Style.space(3)
+      hoverEnabled: hintText.clickable
+      enabled: hintText.clickable
+      cursorShape: hintText.clickable ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onClicked: hintText.activated()
     }
   }
 }

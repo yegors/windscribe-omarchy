@@ -209,6 +209,28 @@ function protocolLabel(value) {
   return labels[parts[0]] + (parts.length > 1 ? ":" + parts[1] : "")
 }
 
+// Terminal-style shorthand for a normalized protocol base ("wireguard" → "wg").
+function protocolShortName(value) {
+  var map = { wireguard: "wg", udp: "udp", tcp: "tcp", stealth: "stealth", wstunnel: "ws" }
+  return map[protocolBase(value)] || ""
+}
+
+// The status line's "Protocol: WireGuard:443" value → "wg/443".
+function protocolStatusShort(value) {
+  var raw = String(value || "").trim()
+  if (raw === "") return ""
+  var parts = raw.split(":")
+  var map = { wireguard: "wg", udp: "udp", tcp: "tcp", stealth: "stealth", wstunnel: "ws" }
+  var name = map[parts[0].trim().toLowerCase()] || markupSafe(parts[0]).trim().toLowerCase()
+  var port = parts.length > 1 ? parts[1].replace(/\D/g, "") : ""
+  return port !== "" ? name + "/" + port : name
+}
+
+// Lowercase, dash-joined display form: "Washington DC" → "washington-dc".
+function slugify(value) {
+  return markupSafe(value).toLowerCase().trim().replace(/\s+/g, "-")
+}
+
 function protocolBase(value) {
   var normalized = normalizeProtocol(value)
   return normalized === "" ? "" : normalized.split(":")[0]

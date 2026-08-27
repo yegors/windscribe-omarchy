@@ -24,7 +24,7 @@ Research completed on 2026-08-26 against:
 
 ## Visual direction
 
-The home screen uses `TunnelInstrument.qml`:
+The 0.3.0 home screen used `TunnelInstrument.qml` (retired in 0.5.0):
 
 - abstract device-to-exit tunnel
 - animated packet direction driven by RX/TX counters
@@ -49,6 +49,35 @@ The home screen uses `TunnelInstrument.qml`:
 - [x] Rewrite manifest and README copy
 - [x] Pass parser/formatter tests and static editor diagnostics
 - [ ] Complete Linux/Omarchy runtime and visual validation
+
+## 0.5.0 — the terminal panel
+
+0.5.0 replaces the instrument-card look with the approved terminal design
+(Claude Design project "Windscribe VPN plugin redesign", `Windscribe
+Panel.dc.html`). The whole panel is typographic: dashed and dotted leader
+lines, numbered exit rows, `[ on ]` bracket toggles, one full-width block
+button, and a settings *view* (`s` / `esc`) instead of a tab strip.
+
+Design-to-reality substitutions, because every value shown must be
+CLI-sourced:
+
+- Per-exit latency (`12ms`) has no `windscribe-cli` source → replaced by the
+  real `10g` / `pro` flags and the favourite star. The fastest-location row
+  keeps Windscribe's own latency-based choice.
+- Demo protocols (`websocket`, `openvpn tcp`) → the Linux client's real set:
+  wireguard, udp, tcp, stealth, wstunnel; ports come live from
+  `windscribe-cli ports`.
+- "start on boot" is not CLI-settable on the GUI build → dropped; the
+  general section instead carries real rows: appearance (theme-bound), data
+  allowance, rotate ip, update, account, sign out.
+- The demo's cycling IP → `windscribe-cli ip rotate` behind the header
+  rotate control.
+- Hardcoded design colors → alpha ramps over the Omarchy theme foreground,
+  with `Color.accent` as the signal colour, so every theme keeps the
+  hierarchy. The inverted connect button and dropdown surfaces derive an
+  opposite pole from the foreground's HSL lightness.
+- `TunnelInstrument.qml` retired; the hero + button + stats + wave live in
+  `Panel.qml`.
 
 ## 0.4.0 refresh
 

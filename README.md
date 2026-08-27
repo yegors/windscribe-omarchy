@@ -2,21 +2,21 @@
 
 Windscribe controls that belong in the bar.
 
-Connect, pick a location, watch the tunnel, rotate your IP, and control the
+Connect, pick an exit, watch live traffic, rotate your IP, and control the
 Firewall without turning a terminal into permanent desk furniture.
 
-<img src="preview.png" width="720" alt="Windscribe for Omarchy with the live Tunnel Instrument, quick locations, and searchable location list">
+<img src="preview.png" width="720" alt="Windscribe for Omarchy: the terminal-style connection panel and settings view">
 
 ## What it does
 
-- Connects to your last exit or **Best Location**
+- Connects to your last exit or the **fastest location**
 - Searches Windscribe cities, regions, country codes, and datacenter nicknames
-- Keeps **Favourites** and recent destinations close
-- Shows live download/upload activity from the tunnel interface
-- Displays protocol, port, VPN IP, observed transfer, and data allowance
+- Keeps **Favourites** and recent destinations at the top of the list
+- Shows live download/upload rates and a traffic wave from the tunnel interface
+- Displays protocol, port, Firewall state, VPN IP, and session transfer
 - Rotates the current VPN IP
 - Controls the Windscribe **Firewall**
-- Selects a Preferred Protocol and a live, protocol-specific port
+- Selects a preferred protocol and a live, protocol-specific port
 - Reports tunnel verification and network-interference states
 - Supports mouse and keyboard control
 
@@ -31,55 +31,54 @@ omarchy plugin add https://github.com/yegors/windscribe-omarchy.git --enable
 
 Then open the Windscribe bar widget:
 
-1. **Install Windscribe CLI**
-2. **Sign in**
-3. **Connect**
+1. **install windscribe**
+2. **sign in**
+3. **connect**
 
 Credentials are entered directly into Windscribe's terminal prompt. The plugin
 does not receive or store them.
 
-## The home screen
+## The panel
 
-The **Tunnel Instrument** replaces the usual VPN world map with information
-that matters now:
+The home view is a single column of live fact:
 
-- **This device → VPN exit** shows tunnel state between corner brackets that
-  take the signal colour while a tunnel is up
-- Moving packets reflect real download and upload activity
-- The exit ring reflects Firewall state
-- A callout capsule above the line shows the active protocol and port
-- The connection header carries the exit, state, Firewall badge, and your
-  VPN IP — click the IP to rotate it
-- The mirrored activity band shows up to 60 seconds observed while open
-- Rates and this view's transfer/time read out below the band
+- **Header** — the wordmark, your VPN IP in the accent colour while the
+  tunnel is up (`off` otherwise), and a rotate control
+- **Destination** — the current or next exit with its datacenter nickname
+  and region, plus the live tunnel line: `wg/443 · fw on` when connected,
+  `next: auto · fw off` when not
+- **The button** — one full-width action: `▶ connect` (filled) or
+  `■ disconnect · 4m 12s` (accent outline; the time is connection time
+  observed while the panel is open)
+- **down / up / data** — live rates and transfer observed while the panel
+  is open
+- **The wave** — forty-four bars of real tunnel activity
+- **Exits** — a numbered list: favourites first (starred `*`), then recents,
+  then every datacenter, with `10g` marking 10 Gbps exits and `pro` in the
+  metadata. `/` searches everything.
 
-The instrument never looks up or guesses your physical location. If motion is
-disabled, the same states remain visible without animation.
+The panel never looks up or guesses your physical location, and it shows no
+numbers it cannot measure — which is why there are no per-exit latency
+figures: `windscribe-cli` does not expose them. The fastest location row is
+Windscribe's own latency-based choice.
 
-## Locations
+## Settings
 
-**Best Location** uses Windscribe's latency-based choice.
+Press `s`. Every row is a real control:
 
-The location list puts Favourites and recent exits first, followed by every
-available datacenter. Search accepts a city, region, country code, or nickname.
-Rows retain Windscribe's **Pro** and **10 Gbps** labels.
+- **firewall** — `[ on ]` / `[ off ]`, via `windscribe-cli firewall`;
+  shows `[ always ]` when Windscribe has locked Always On
+- **preferred protocol** — automatic, wireguard, udp, tcp, stealth, wstunnel
+- **port** — populated live from `windscribe-cli ports` for that protocol
+- **connection alerts** — desktop notifications on connect and unexpected drops
+- **interface motion** — disables decorative animation
+- **appearance** — follows the Omarchy theme; nothing to configure
+- **data allowance** — plan usage as reported by the CLI
+- **rotate ip** — new address, same exit (while connected)
+- **update** — runs the official updater when one is advertised
+- **sign out** — two-step confirm; an enabled Firewall stays enabled
 
-Selecting a datacenter nickname connects to that exact exit. Selecting a city
-lets Windscribe choose an exit there.
-
-## Connection controls
-
-- **Firewall** blocks traffic outside the VPN tunnel
-- **Preferred Protocol** offers Automatic, WireGuard, UDP, TCP, Stealth, and
-  WStunnel
-- **Port** is populated from `windscribe-cli ports` for the selected protocol
-- **Connection alerts** cover successful connections and unexpected drops
-- **Interface motion** disables decorative state animation
-- **Rotate IP** requests a new address at the current location
-- **Update Windscribe** runs the official updater when one is advertised
-- **Data allowance** shows plan usage, with a meter on finite plans
-
-When signing out, an enabled Firewall stays enabled.
+Protocol and port apply on the next connect.
 
 ## Bar controls
 
@@ -93,24 +92,24 @@ state change when interface motion is enabled.
 ## Keyboard
 
 - `J` / `K` or arrows: move
-- `Enter`: activate the selected control
-- `/`: search locations
-- `F`: toggle a Favourite
-- `←` / `→`: switch Locations / Connection
+- `Enter`: connect / toggle the selected control
+- `/`: search exits
+- `F`: toggle a favourite
+- `S` or `←` / `→`: settings and back
 - `T`: connect or disconnect
 - `W`: toggle Firewall
 - `R`: refresh
-- `Esc`: leave search or close the panel
+- `Esc`: leave search, close a menu, go back, then close
 
-## Settings
+## Widget settings
 
-Widget settings are stored with the Omarchy bar entry:
+Stored with the Omarchy bar entry:
 
 - `refreshIntervalSec`: closed-panel status interval, from 2 to 60 seconds
 - `preferredProtocol`: protocol with optional `:port`
 - `notifications`: connection alert toggle
 - `motion`: interface animation toggle
-- `favoriteLocations`: managed by the stars in the location list
+- `favoriteLocations`: managed by the stars in the exit list
 
 ## Scripting
 
@@ -158,10 +157,6 @@ The Windscribe badge is redrawn from the official
 [Windscribe Desktop App](https://github.com/Windscribe/Desktop-App) asset and
 inherits the active Omarchy theme.
 
-Early panel integration research referenced
-[OmaProton VPN](https://github.com/grichard99/omaproton-vpn) under MIT. The
-current map-free tunnel visualization, Windscribe location experience, and
-copy were rebuilt for this plugin.
 
 ## License
 
