@@ -138,15 +138,24 @@ Panel {
       || String(entry.nickname).toLowerCase().indexOf(query) !== -1
   }
 
+  // Resolves a nickname, a city, or the CLI status line's combined
+  // "City Nickname" form to one locations entry.
   function locationByTarget(value) {
-    var target = String(value || "").toLowerCase()
+    var target = String(value || "").trim().toLowerCase()
+    if (target === "") return null
     var available = vpn.locations || []
     for (var i = 0; i < available.length; i++) {
-      if (String(available[i].nickname).toLowerCase() === target
-          || String(available[i].city).toLowerCase() === target) return available[i]
+      var city = String(available[i].city).toLowerCase()
+      var nickname = String(available[i].nickname).toLowerCase()
+      if (target === nickname || target === city) return available[i]
+      if (nickname !== ""
+          && (target === city + " " + nickname
+              || target === city + " - " + nickname)) return available[i]
     }
     return null
   }
+
+  readonly property var currentLocation: locationByTarget(vpn.city)
 
   function entryForTarget(value, kindFallback) {
     var resolved = locationByTarget(value)
@@ -302,9 +311,14 @@ Panel {
   }
 
   function entryCurrent(entry) {
-    var current = String(vpn.city || "").toLowerCase()
-    return current !== "" && entry.city !== ""
-      && String(entry.city).toLowerCase() === current
+    if (entry.city === "") return false
+    // vpn.city may be the CLI's combined "City Nickname" form; compare
+    // against the resolved city so the current row still highlights.
+    var current = root.currentLocation
+      ? String(root.currentLocation.city)
+      : String(vpn.city || "")
+    return current !== ""
+      && String(entry.city).toLowerCase() === current.toLowerCase()
   }
 
   function activateEntry(entry) {
@@ -320,10 +334,12 @@ Panel {
     return ""
   }
 
+  // Both states render identically: the city big, "nickname · region" below.
   function heroCityText() {
     var target = heroTargetCity()
-    if (target !== "") return lcText(target)
-    return vpn.connected ? "connected" : "best location"
+    if (target === "") return vpn.connected ? "connected" : "best location"
+    var resolved = locationByTarget(target)
+    return lcText(resolved ? resolved.city : target)
   }
 
   function heroMetaText() {
@@ -640,7 +656,9 @@ Panel {
 
   function activateRecovery() {
     if (recoveryIndex === 0) {
-      if (vpn.city !== "") vpn.connectTo(vpn.city)
+      var resolved = root.currentLocation
+      if (resolved) vpn.connectTo(String(resolved.nickname || resolved.city))
+      else if (vpn.city !== "") vpn.connectTo(vpn.city)
       else vpn.connect()
     } else {
       setTab("connection")

@@ -48,10 +48,10 @@ The home view is a single column of live fact:
   and region, plus the live tunnel line: `wg/443 · fw on` when connected,
   `next: auto · fw off` when not
 - **The button** — one full-width action: `▶ connect` (filled) or
-  `■ disconnect · 4m 12s` (accent outline; the time is connection time
-  observed while the panel is open)
-- **down / up / data** — live rates and transfer observed while the panel
-  is open
+  `■ disconnect · 4m 12s` (accent outline, with the connection's elapsed
+  time)
+- **down / up / data** — live rates, and cumulative transfer for the
+  current connection
 - **The wave** — forty-four bars of real tunnel activity
 - **Exits** — a numbered list: favourites first (starred `*`), then recents,
   then every datacenter, with `10g` marking 10 Gbps exits and `pro` in the

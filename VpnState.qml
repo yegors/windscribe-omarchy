@@ -144,10 +144,13 @@ Item {
   }
   readonly property var usage: Model.parseDataUsage(dataUsage)
 
+  // Counters are cumulative per connection, not per view: closing the panel
+  // only pauses sampling. The kernel's interface counters keep counting, so
+  // the first sample after reopening rolls the unseen traffic into the
+  // totals. Resets happen on connect/disconnect transitions in applyStatus.
   onPanelOpenChanged: {
-    trafficReset()
     if (panelOpen && connected) {
-      _connectedSinceMs = Date.now()
+      if (_connectedSinceMs === 0) _connectedSinceMs = Date.now()
       if (linkDevice === "") routeProbe()
     }
   }
