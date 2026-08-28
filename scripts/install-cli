@@ -254,7 +254,13 @@ prepare_tmp
 fetch_release
 
 package="$tmp_dir/windscribe-cli.pkg.tar.zst"
-signature="$package.sig"
+# Deliberately not "$package.sig": with pacman's default
+# LocalFileSigLevel = Optional, a signature file sitting next to the package
+# makes pacman re-verify it against its own keyring, which does not hold
+# Windscribe's key, and the install dies on "required key missing from
+# keyring". The pinned-key gpgv check below is the trust boundary; pacman
+# is handed only the already-verified package.
+signature="$tmp_dir/windscribe-cli.sig"
 printf 'Downloading Windscribe CLI %s...\n' "$release_version"
 download_release "$package" "$signature"
 verify_package "$package" "$signature" "$release_sha256"

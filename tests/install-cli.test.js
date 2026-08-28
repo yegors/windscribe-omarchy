@@ -50,6 +50,12 @@ test("installer pins the trust key and verifies before pacman", () => {
     source.lastIndexOf("verify_package \"$package\"")
       < source.lastIndexOf("/usr/bin/sudo /usr/bin/pacman"),
   )
+  // pacman must never see the detached signature: an adjacent
+  // "<package>.sig" makes pacman re-verify against its own keyring, which
+  // does not hold Windscribe's key, and the install fails with
+  // "required key missing from keyring".
+  assert.match(source, /signature="\$tmp_dir\/windscribe-cli\.sig"/)
+  assert.equal(source.includes('signature="$package.sig"'), false)
   assert.match(vpnState, /Qt\.resolvedUrl\("scripts\/install-cli"\)/)
   assert.match(vpnState, /Model\.shellQuote\(localFilePath\(cliInstallerUrl\)\)/)
   assert.equal(vpnState.includes("Model.cliInstallCommand()"), false)
@@ -59,6 +65,10 @@ test("bundled Windscribe signing key has the pinned fingerprint", (t) => {
   const probe = spawnSync("gpg", ["--version"], { encoding: "utf8" })
   if (probe.error || probe.status !== 0) {
     t.skip("gpg is unavailable")
+    return
+  }
+  if (process.platform === "win32") {
+    t.skip("MSYS gpg cannot use Windows --homedir paths")
     return
   }
 

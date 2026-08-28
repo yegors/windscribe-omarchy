@@ -50,6 +50,22 @@ The 0.3.0 home screen used `TunnelInstrument.qml` (retired in 0.5.0):
 - [x] Pass parser/formatter tests and static editor diagnostics
 - [ ] Complete Linux/Omarchy runtime and visual validation
 
+## 0.5.3 — installer fix from marketplace review
+
+On a default Arch/Omarchy setup (`LocalFileSigLevel = Optional`), the 0.5.2
+installer downloaded the detached signature next to the package as
+`windscribe-cli.pkg.tar.zst.sig`. `pacman -U` then re-verified that signature
+against **pacman's** keyring, which does not hold Windscribe's key, and the
+install failed with "required key missing from keyring" — after the plugin's
+own pinned-key verification had already passed.
+
+The signature is now stored under a non-adjacent name
+(`windscribe-cli.sig`), so pacman installs the already-verified package
+without consulting its keyring. The plugin's `gpgv` check against the
+repository-pinned key remains the trust boundary and still runs before
+`sudo`. Nothing is imported into `pacman-key`, keeping system trust state
+untouched. A regression test asserts the signature path stays non-adjacent.
+
 ## 0.5.2 — marketplace security hardening
 
 - The first-run installer discovers the newest supported stable Arch CLI from

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "com.windscribe.vpn",
   "name": "Windscribe",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "author": "Windscribe Limited",
   "license": "MIT",
   "description": "Windscribe controls for Omarchy in a terminal-grade panel: one-key connect, live traffic, exit search with favourites, Firewall, protocol and port selection, IP rotation, and allowance tracking.",

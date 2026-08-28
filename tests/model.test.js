@@ -226,6 +226,21 @@ test("bounded-output preserves status and fails closed on overflow", {
   assert.equal(Buffer.byteLength(stderrOverflow.stderr), 64)
 })
 
+// Symlink creation is a privilege on some platforms (Windows without
+// Developer Mode); probe instead of assuming.
+function canSymlink() {
+  const os = require("node:os")
+  const probeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ws-symlink-"))
+  try {
+    fs.symlinkSync(probeDir, path.join(probeDir, "probe"))
+    return true
+  } catch {
+    return false
+  } finally {
+    fs.rmSync(probeDir, { recursive: true, force: true })
+  }
+}
+
 test("stateDirPrepareCommand hardens a real directory and refuses a symlink", () => {
   const os = require("node:os")
   const { execFileSync } = require("node:child_process")
@@ -234,6 +249,10 @@ test("stateDirPrepareCommand hardens a real directory and refuses a symlink", ()
   assert.match(cmd, /chmod 700 "\$dir"/)
   assert.match(cmd, /mkdir -m 700 "\$dir"/)
   assert.equal(cmd.includes("mkdir -p \"$dir\""), false)
+
+  // The execution phase needs POSIX modes and a real bash; the static
+  // command checks above already ran everywhere.
+  if (process.platform === "win32") return
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ws-state-"))
   try {
@@ -254,13 +273,15 @@ test("stateDirPrepareCommand hardens a real directory and refuses a symlink", ()
     assert.equal(created.isSymbolicLink(), false)
     assert.equal(created.mode & 0o777, 0o700)
 
-    const linked = path.join(tmp, "linked")
-    fs.symlinkSync(existing, linked)
-    assert.throws(
-      () => execFileSync("bash", ["-c", Model.stateDirPrepareCommand(linked)], { stdio: "pipe" }),
-    )
-    assert.equal(fs.lstatSync(linked).isSymbolicLink(), true)
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(existing, "state.json"), "utf8")), recents)
+    if (canSymlink()) {
+      const linked = path.join(tmp, "linked")
+      fs.symlinkSync(existing, linked)
+      assert.throws(
+        () => execFileSync("bash", ["-c", Model.stateDirPrepareCommand(linked)], { stdio: "pipe" }),
+      )
+      assert.equal(fs.lstatSync(linked).isSymbolicLink(), true)
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(existing, "state.json"), "utf8")), recents)
+    }
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
   }
@@ -276,10 +297,18 @@ test("terminalCommandWithResult writes the marker without following a symlink", 
   assert.match(cmd, /mv -f -T "\$tmp" "\$result"/)
   assert.match(cmd, /windscribe-cli login/)
 
+  // The execution phase needs POSIX paths inside bash; the static command
+  // checks above already ran everywhere.
+  if (process.platform === "win32") return
+
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ws-marker-"))
   try {
     execFileSync("mv", ["-T", "--version"], { stdio: "ignore" })
   } catch {
+    fs.rmSync(tmp, { recursive: true, force: true })
+    return
+  }
+  if (!canSymlink()) {
     fs.rmSync(tmp, { recursive: true, force: true })
     return
   }
