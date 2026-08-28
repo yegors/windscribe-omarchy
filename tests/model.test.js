@@ -258,14 +258,14 @@ test("stateDirPrepareCommand hardens a real directory and refuses a symlink", ()
   try {
     const existing = path.join(tmp, "omarchy-windscribe")
     fs.mkdirSync(existing, { mode: 0o755 })
-    const recents = { recents: [{ key: "loc:toronto", city: "Toronto" }] }
-    fs.writeFileSync(path.join(existing, "state.json"), JSON.stringify(recents))
+    const leftover = { marker: "keep-me" }
+    fs.writeFileSync(path.join(existing, "leftover.json"), JSON.stringify(leftover))
     execFileSync("bash", ["-c", Model.stateDirPrepareCommand(existing)])
     const st = fs.lstatSync(existing)
     assert.equal(st.isSymbolicLink(), false)
     assert.equal(st.isDirectory(), true)
     assert.equal(st.mode & 0o777, 0o700)
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(existing, "state.json"), "utf8")), recents)
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(existing, "leftover.json"), "utf8")), leftover)
 
     const fresh = path.join(tmp, "nested", "omarchy-windscribe")
     execFileSync("bash", ["-c", Model.stateDirPrepareCommand(fresh)])
@@ -280,11 +280,24 @@ test("stateDirPrepareCommand hardens a real directory and refuses a symlink", ()
         () => execFileSync("bash", ["-c", Model.stateDirPrepareCommand(linked)], { stdio: "pipe" }),
       )
       assert.equal(fs.lstatSync(linked).isSymbolicLink(), true)
-      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(existing, "state.json"), "utf8")), recents)
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(existing, "leftover.json"), "utf8")), leftover)
     }
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
   }
+})
+
+test("plugin does not persist recents or reopen state.json", () => {
+  const vpnState = fs.readFileSync(path.join(__dirname, "..", "VpnState.qml"), "utf8")
+  const panel = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
+  assert.equal(/FileView\s*\{/.test(vpnState), false)
+  assert.equal(vpnState.includes("setText("), false)
+  assert.equal(vpnState.includes("scripts/state-io"), false)
+  assert.equal(/\brecents\b/.test(vpnState), false)
+  assert.equal(/\brecents\b/.test(panel), false)
+  assert.match(vpnState, /property string lastLocation/)
+  assert.match(panel, /persistSetting\("lastLocation"/)
+  assert.equal(fs.existsSync(path.join(__dirname, "..", "scripts", "state-io")), false)
 })
 
 test("terminalCommandWithResult writes the marker without following a symlink", () => {

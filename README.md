@@ -67,7 +67,24 @@ Middle click the badge to refresh status and locations.
 
 Protocol and port changes apply on the next connect. Sign-out asks for a second confirm, and if the Firewall is on it stays on.
 
-The fastest-location row is Windscribe's own latency pick. This plugin doesn't measure ping per city because the CLI doesn't expose it, and it doesn't guess your physical location.
+## Design
+
+The panel is typographic: dashed and dotted leader lines, numbered exit rows,
+`[ on ]` bracket toggles, and one full-width connect button. Colors are
+derived from the active Omarchy theme's foreground and accent, so it follows
+your theme instead of shipping its own.
+
+Decisions that shape it:
+
+- Windscribe's own terms, as-is: fastest location, Firewall, Favourites,
+  preferred protocol.
+- Omarchy's panel, theme, and keyboard conventions win over brand styling.
+- Nothing is shown that can't be measured. No guessed origin, no per-exit
+  latency (the CLI doesn't expose ping per city; the fastest-location row is
+  Windscribe's own latency pick), no DNS safety claims, no synthetic privacy
+  score.
+- Copy stays short, and consequences are stated where you act.
+- Packaging details stay out of the product UI.
 
 ## Widget settings
 
@@ -78,6 +95,7 @@ Stored with the Omarchy bar entry:
 - `notifications`: connection alert toggle
 - `motion`: interface animation toggle
 - `favoriteLocations`: managed by the stars in the exit list
+- `lastLocation`: last connected city label, for the disconnected hero
 
 ## Scripting
 
@@ -111,8 +129,10 @@ The plugin:
 - validates user-entered locations before they reach the CLI
 - renders CLI output as plain, sanitized text
 - reads tunnel byte counters only while the panel is open
-- stores recent location labels plus short-lived sign-in/update result markers
-  under a `0700` directory at `~/.local/state/omarchy-windscribe/`
+- stores short-lived sign-in/update result markers under a `0700` directory
+  at `~/.local/state/omarchy-windscribe/` (written with `mktemp` plus `mv -T`,
+  read through bounded `cat`). Favourites and the last-city hero label persist
+  in the Omarchy widget settings, not a plugin-private file.
 
 Install, sign-in, and update use Omarchy's floating terminal because those
 commands may need interactive input.

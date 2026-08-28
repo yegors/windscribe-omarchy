@@ -80,11 +80,9 @@ Item {
   property real _connectedSinceMs: 0
   readonly property int trafficSamples: 60
 
-  // Last three places connected to, persisted across shell restarts.
-  // Location labels only — nothing secret.
-  property var recents: []
+  // Sign-in/update result markers live here. Last city is widget settings,
+  // same store as favourites — not a plugin-private file.
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/omarchy-windscribe"
-  readonly property string statePath: stateDir + "/state.json"
   // StdioCollector has no native maximum. Every process wired to one runs
   // through this producer-side limiter before bytes enter omarchy-shell.
   readonly property string outputLimiterPath: String(Qt.resolvedUrl("scripts/bounded-output"))
@@ -95,6 +93,9 @@ Item {
   property bool stateDirReady: false
   property string signInResultPath: ""
   property string updateResultPath: ""
+  // Last connected label from CLI status. Hero metadata is looked up from
+  // the live locations list, not stored here.
+  property string lastLocation: ""
 
   property string _statusOutput: ""
   property string _statusError: ""
@@ -117,7 +118,6 @@ Item {
   property bool _statusInitialized: false
   property bool _expectDown: false
   property string _actionKind: ""
-  property var _target: null
   property string _requestedPortsProtocol: ""
   property string _portsInFlightProtocol: ""
   property bool _updatePending: false
@@ -234,6 +234,24 @@ Item {
   function protocolPreference() {
     return Model.normalizeProtocol(setting("preferredProtocol", ""))
   }
+
+  function rememberLocation(value) {
+    var next = String(value || "").trim()
+    if (next === "" || next === lastLocation) return
+    if (!Model.isSafeLocation(next)) return
+    lastLocation = next
+  }
+
+  function syncLastLocationFromSettings() {
+    if (lastLocation !== "") return
+    var stored = String(setting("lastLocation", "") || "").trim()
+    if (stored === "") return
+    if (!Model.isSafeLocation(stored)) return
+    lastLocation = stored
+  }
+
+  onSettingsChanged: syncLastLocationFromSettings()
+  Component.onCompleted: syncLastLocationFromSettings()
 
   function boundedCommand(command, maxBytes) {
     return Model.boundedCommand(outputLimiterPath, maxBytes, command)
@@ -354,6 +372,7 @@ Item {
         trafficReset()
         _connectedSinceMs = Date.now()
       }
+      if (s.city !== "") rememberLocation(s.city)
       if (linkDevice === "") routeProbe()
     } else {
       if (wasConnected) trafficReset()
@@ -405,7 +424,6 @@ Item {
     if (!installed || busy) return
     desiredState = 1
     _expectDown = false
-    _target = null
     runAction(connectCommand(null), "connect", "Connecting…")
   }
 
@@ -413,7 +431,6 @@ Item {
     if (!installed || busy) return
     desiredState = 1
     _expectDown = false
-    _target = null
     runAction(connectCommand("best"), "connect", "Connecting to Best Location…")
   }
 
@@ -427,14 +444,7 @@ Item {
     }
     desiredState = 1
     _expectDown = false
-    _target = { key: "loc:" + target.toLowerCase(), city: target }
     runAction(connectCommand(target), "connect", "Connecting to " + Model.markupSafe(target) + "…")
-  }
-
-  function connectRecent(index) {
-    var r = recents[index]
-    if (!r || !r.city) return
-    connectTo(r.city)
   }
 
   function disconnect() {
@@ -589,30 +599,6 @@ Item {
                              "-u", urgency || "normal", summary, body || ""])
   }
 
-  function recordRecent(target) {
-    if (!target || !target.key) return
-    var next = [target]
-    for (var i = 0; i < recents.length && next.length < 3; i++) {
-      if (recents[i] && recents[i].key !== target.key) next.push(recents[i])
-    }
-    recents = next
-    saveState()
-  }
-
-  function applyState(text) {
-    try {
-      var s = JSON.parse(String(text || "{}"))
-      recents = Array.isArray(s.recents) ? s.recents.slice(0, 3) : []
-    } catch (e) {
-      recents = []
-    }
-  }
-
-  function saveState() {
-    if (!stateDirReady) return
-    stateFile.setText(JSON.stringify({ recents: recents }))
-  }
-
   function trafficReset() {
     rxHistory = []
     txHistory = []
@@ -740,8 +726,6 @@ Item {
     command: ["bash", "-c", Model.stateDirPrepareCommand(root.stateDir)]
     onExited: function(exitCode) {
       root.stateDirReady = exitCode === 0
-      if (root.stateDirReady) stateFile.reload()
-      else root.applyState("{}")
     }
   }
 
@@ -1067,14 +1051,6 @@ Item {
     }
   }
 
-  FileView {
-    id: stateFile
-    path: root.statePath
-    printErrors: false
-    onLoaded: if (root.stateDirReady) root.applyState(text())
-    onLoadFailed: root.applyState("{}")
-  }
-
   Process {
     id: archProcess
     running: true
@@ -1289,7 +1265,6 @@ Item {
       if (root._actionAborted) {
         root._actionAborted = false
         root._actionKind = ""
-        root._target = null
         root.pendingLabel = ""
         root.resumeDeferredReads()
         root.refresh()
@@ -1298,9 +1273,7 @@ Item {
       var stdout = String(root._actionOutput || actionStdout.text || "")
       var stderr = String(root._actionError || actionStderr.text || "")
       var kind = root._actionKind
-      var target = root._target
       root._actionKind = ""
-      root._target = null
       root.pendingLabel = ""
       if (exitCode !== 0) {
         root.desiredState = -1
@@ -1321,7 +1294,6 @@ Item {
           // panel. The desktop notification carries the CLI's own words.
           var lines = stdout.split(/\r?\n/).filter(function(l) { return l.trim() !== "" })
           var line = Model.elide(lines.length > 0 ? lines[lines.length - 1] : "Connected")
-          root.recordRecent(target)
           root.notify("Windscribe connected", line, "normal")
         }
         // Post-exit settle guard: drop the optimistic state if status never

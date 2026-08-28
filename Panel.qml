@@ -230,17 +230,6 @@ Panel {
       }
     }
 
-    if (query === "") {
-      for (var r = 0; r < vpn.recents.length; r++) {
-        var recent = vpn.recents[r]
-        if (!recent || !recent.city || seen[targetKey(recent.city)]) continue
-        var recentEntry = entryForTarget(recent.city, "recent")
-        out.push(recentEntry)
-        seen[entryKey(recentEntry)] = true
-        seen[targetKey(recent.city)] = true
-      }
-    }
-
     var matched = false
     for (var k = 0; k < out.length; k++)
       if (out[k].kind !== "best") matched = true
@@ -329,22 +318,21 @@ Panel {
   // ── Hero copy ─────────────────────────────────────────────────────────
   function heroTargetCity() {
     if (vpn.city !== "") return String(vpn.city)
-    if (!vpn.connected && vpn.recents.length > 0 && vpn.recents[0] && vpn.recents[0].city)
-      return String(vpn.recents[0].city)
+    if (!vpn.connected && vpn.lastLocation !== "") return String(vpn.lastLocation)
     return ""
   }
 
   // Both states render identically: the city big, "nickname · region" below.
   function heroCityText() {
     var target = heroTargetCity()
-    if (target === "") return vpn.connected ? "connected" : "best location"
+    if (target === "") return vpn.connected ? "connected" : "last location"
     var resolved = locationByTarget(target)
     return lcText(resolved ? resolved.city : target)
   }
 
   function heroMetaText() {
     var target = heroTargetCity()
-    if (target === "") return vpn.connected ? "" : "auto · lowest latency"
+    if (target === "") return vpn.connected ? "" : "cli default"
     var resolved = locationByTarget(target)
     if (!resolved) return ""
     var parts = []
@@ -419,6 +407,12 @@ Panel {
     for (var existing in settings) if (existing !== "id") entry[existing] = settings[existing]
     entry[key] = value
     root.bar.shell.updateEntryInline(root.moduleName, entry)
+  }
+
+  function persistLastLocation() {
+    var current = settings && settings.lastLocation !== undefined ? String(settings.lastLocation) : ""
+    if (vpn.lastLocation === "" || current === vpn.lastLocation) return
+    persistSetting("lastLocation", vpn.lastLocation)
   }
 
   function toggleFavorite(value) {
@@ -719,7 +713,14 @@ Panel {
     return Math.max(0, panelFlick.contentHeight - panelFlick.height)
   }
 
-  onSettingsChanged: syncFavoriteLocations()
+  onSettingsChanged: {
+    syncFavoriteLocations()
+    persistLastLocation()
+  }
+  Connections {
+    target: vpn
+    function onLastLocationChanged() { root.persistLastLocation() }
+  }
   onSelectedProtocolBaseChanged: {
     if (selectedProtocolBase !== "") vpn.refreshPorts(selectedProtocolBase)
     else if (ddOpen === "port") ddOpen = ""
@@ -737,6 +738,7 @@ Panel {
   }
   Component.onCompleted: {
     syncFavoriteLocations()
+    persistLastLocation()
     panelOwnerId = vpn.registerPanelOwner()
   }
   Component.onDestruction: vpn.setPanelOwnerOpen(panelOwnerId, false)
