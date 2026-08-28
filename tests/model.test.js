@@ -162,15 +162,68 @@ test("location and label helpers reject unsafe input", () => {
   assert.equal(Model.shellQuote("a'b"), "'a'\"'\"'b'")
 })
 
-test("cliInstallCommand writes the package into a private mktemp directory", () => {
-  const cmd = Model.cliInstallCommand()
-  assert.equal(cmd.includes("/tmp/windscribe-cli.pkg.tar.zst"), false)
-  assert.match(cmd, /mktemp -d/)
-  assert.match(cmd, /trap 'rm -rf -- "\$dir"' EXIT/)
-  assert.match(cmd, /--proto '=https'/)
-  assert.match(cmd, /https:\/\/windscribe\.com\/install\/desktop\/linux_zst_x64_cli/)
-  assert.match(cmd, /\[ -f "\$pkg" \] && \[ ! -L "\$pkg" \]/)
-  assert.match(cmd, /sudo pacman -U --noconfirm "\$pkg"/)
+test("boundedCommand preserves argv and applies a hard maximum", () => {
+  assert.deepEqual(
+    Array.from(Model.boundedCommand(
+      "file:///plugin/scripts/bounded-output",
+      16384,
+      ["windscribe-cli", "connect", "New York; still one argument"],
+    )),
+    [
+      "file:///plugin/scripts/bounded-output",
+      "16384",
+      "windscribe-cli",
+      "connect",
+      "New York; still one argument",
+    ],
+  )
+  assert.equal(Model.boundedCommand("/limiter", 2000000, ["true"])[1], "1048576")
+  assert.equal(Model.outputLimitExitCode(), 125)
+})
+
+test("bounded-output has producer-side caps and signal forwarding", () => {
+  const limiter = path.join(__dirname, "..", "scripts", "bounded-output")
+  fs.accessSync(limiter, fs.constants.X_OK)
+  const source = fs.readFileSync(limiter, "utf8")
+  assert.match(source, /count=1 iflag=fullblock/)
+  assert.match(source, /stdout\.overflow/)
+  assert.match(source, /stderr\.overflow/)
+  assert.match(source, /exit "\$overflow_exit"/)
+  assert.match(source, /forward_signal TERM 143/)
+  assert.match(source, /setpriv --pdeathsig TERM/)
+})
+
+test("bounded-output preserves status and fails closed on overflow", {
+  skip: process.platform !== "linux",
+}, () => {
+  const { spawnSync } = require("node:child_process")
+  const limiter = path.join(__dirname, "..", "scripts", "bounded-output")
+
+  const normal = spawnSync(
+    limiter,
+    ["64", "bash", "-c", "printf out; printf err >&2; exit 7"],
+    { encoding: "utf8" },
+  )
+  assert.equal(normal.status, 7)
+  assert.equal(normal.stdout, "out")
+  assert.equal(normal.stderr, "err")
+
+  const payload = "x".repeat(65)
+  const stdoutOverflow = spawnSync(
+    limiter,
+    ["64", "printf", "%s", payload],
+    { encoding: "utf8" },
+  )
+  assert.equal(stdoutOverflow.status, Model.outputLimitExitCode())
+  assert.equal(Buffer.byteLength(stdoutOverflow.stdout), 64)
+
+  const stderrOverflow = spawnSync(
+    limiter,
+    ["64", "bash", "-c", "printf '%s' \"$1\" >&2", "bounded-output", payload],
+    { encoding: "utf8" },
+  )
+  assert.equal(stderrOverflow.status, Model.outputLimitExitCode())
+  assert.equal(Buffer.byteLength(stderrOverflow.stderr), 64)
 })
 
 test("stateDirPrepareCommand hardens a real directory and refuses a symlink", () => {

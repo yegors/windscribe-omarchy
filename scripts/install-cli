@@ -1,0 +1,267 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Discover the latest supported stable Arch CLI through Windscribe's update
+# API, then require both its advertised SHA-256 and a detached signature from
+# the repository-pinned Windscribe signing key before pacman sees the package.
+
+readonly api_url='https://api.windscribe.com/ChangeLogs?platform=linux_zst_x64_cli'
+readonly platform='linux_zst_x64_cli'
+readonly expected_key_fingerprints=$'441B49B9D5AFCCAC158444F4E699B988472B0781\n495B477E0F3FA67C20ED94B2BD09F61D249A38FA'
+readonly minimum_version='2.23.11'
+readonly metadata_limit=1048576
+readonly package_limit=67108864
+readonly signature_limit=65536
+
+script_dir=${BASH_SOURCE[0]%/*}
+[[ $script_dir != "${BASH_SOURCE[0]}" ]] || script_dir=.
+plugin_dir=$(cd -- "$script_dir/.." && pwd -P)
+readonly key_path="$plugin_dir/assets/windscribe-linux-signing-key.asc"
+
+tmp_dir=""
+release_id=""
+release_version=""
+release_url=""
+release_sha256=""
+
+fail() {
+  printf 'Windscribe CLI install failed: %s\n' "$*" >&2
+  exit 1
+}
+
+cleanup() {
+  if [[ -n $tmp_dir ]]; then
+    /usr/bin/rm -rf -- "$tmp_dir"
+  fi
+}
+
+require_tool() {
+  [[ -x $1 ]] || fail "required tool is missing: $1"
+}
+
+prepare_tmp() {
+  umask 077
+  tmp_dir=$(/usr/bin/mktemp -d) || fail "could not create a private temporary directory"
+  trap cleanup EXIT
+}
+
+version_at_least() {
+  local version=$1
+  local floor=$2
+  local major minor patch floor_major floor_minor floor_patch
+
+  [[ $version =~ ^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,6}$ ]] || return 1
+  [[ $floor =~ ^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,6}$ ]] || return 1
+  IFS=. read -r major minor patch <<< "$version"
+  IFS=. read -r floor_major floor_minor floor_patch <<< "$floor"
+  major=$((10#$major))
+  minor=$((10#$minor))
+  patch=$((10#$patch))
+  floor_major=$((10#$floor_major))
+  floor_minor=$((10#$floor_minor))
+  floor_patch=$((10#$floor_patch))
+  (( major > floor_major
+    || (major == floor_major && minor > floor_minor)
+    || (major == floor_major && minor == floor_minor && patch >= floor_patch) ))
+}
+
+select_release() {
+  local metadata=$1
+  local selection extra
+  local path_version file_version
+  local url_pattern='^https://deploy\.totallyacdn\.com/desktop-apps/([0-9]+\.[0-9]+\.[0-9]+)/windscribe-cli_([0-9]+\.[0-9]+\.[0-9]+)_amd64\.pkg\.tar\.zst$'
+
+  [[ -f $metadata && ! -L $metadata ]] || fail "update metadata is not a regular file"
+  if ! selection=$(
+    /usr/bin/jq -er --arg platform "$platform" '
+      .data
+      | map(select(
+          .platform == $platform
+          and .beta == 0
+          and .is_supported == 1
+          and .upgradable == 1
+          and ((.id | type) == "number")
+          and ((.version | type) == "string")
+          and ((.build | type) == "number")
+          and ((.url | type) == "string")
+          and ((.sha256 | type) == "string")
+        ))
+      | sort_by(.id)
+      | last
+      | select(. != null)
+      | [
+          (.id | tostring),
+          (.version + "." + (.build | tostring)),
+          .url,
+          .sha256
+        ]
+      | @tsv
+    ' "$metadata"
+  ); then
+    fail "update metadata could not be parsed"
+  fi
+
+  IFS=$'\t' read -r \
+    release_id release_version release_url release_sha256 extra <<< "$selection"
+  [[ -z $extra ]] || fail "update metadata returned unexpected fields"
+
+  [[ $release_id =~ ^[0-9]+$ ]] || fail "release id is invalid"
+  version_at_least "$release_version" "$minimum_version" \
+    || fail "release $release_version is older than the allowed minimum"
+  [[ $release_sha256 =~ ^[0-9a-f]{64}$ ]] || fail "release SHA-256 is invalid"
+  [[ $release_url =~ $url_pattern ]] || fail "release URL is outside the trusted CDN path"
+
+  path_version=${BASH_REMATCH[1]}
+  file_version=${BASH_REMATCH[2]}
+  [[ $path_version == "$release_version" && $file_version == "$release_version" ]] \
+    || fail "release version does not match its package URL"
+}
+
+verify_signing_key() {
+  local gpg_home=$1
+  local keyring=$2
+  local fingerprints
+
+  [[ -f $key_path && ! -L $key_path ]] || fail "bundled signing key is missing"
+  if ! fingerprints=$(
+    /usr/bin/gpg --batch --homedir "$gpg_home" --with-colons \
+      --show-keys "$key_path" 2>/dev/null \
+      | /usr/bin/awk -F: '$1 == "fpr" { print $10 }'
+  ); then
+    fail "bundled signing key could not be read"
+  fi
+  [[ $fingerprints == "$expected_key_fingerprints" ]] \
+    || fail "bundled signing key fingerprints are invalid"
+
+  /usr/bin/gpg --batch --quiet --homedir "$gpg_home" --yes \
+    --dearmor --output "$keyring" "$key_path" \
+    || fail "could not prepare the bundled signing key"
+}
+
+verify_package() {
+  local package=$1
+  local signature=$2
+  local expected_sha256=$3
+  local gpg_home="$tmp_dir/gnupg"
+  local keyring="$tmp_dir/trustedkeys.gpg"
+  local actual_sha256
+
+  [[ $expected_sha256 =~ ^[0-9a-f]{64}$ ]] || fail "expected SHA-256 is invalid"
+  [[ -f $package && ! -L $package ]] || fail "downloaded package is not a regular file"
+  [[ -f $signature && ! -L $signature ]] || fail "detached signature is not a regular file"
+
+  actual_sha256=$(/usr/bin/sha256sum -- "$package")
+  actual_sha256=${actual_sha256%% *}
+  [[ $actual_sha256 == "$expected_sha256" ]] || fail "package SHA-256 mismatch"
+
+  /usr/bin/mkdir -m 700 "$gpg_home" || fail "could not create the GPG verification directory"
+  verify_signing_key "$gpg_home" "$keyring"
+  /usr/bin/gpgv --homedir "$gpg_home" --keyring "$keyring" \
+    "$signature" "$package" \
+    || fail "package signature is invalid"
+}
+
+fetch_release() {
+  local metadata="$tmp_dir/changelog.json"
+
+  /usr/bin/curl -fsSL \
+    --proto '=https' \
+    --proto-redir '=https' \
+    --tlsv1.2 \
+    --connect-timeout 15 \
+    --max-time 30 \
+    --max-filesize "$metadata_limit" \
+    --header 'Accept: application/json' \
+    --header 'Authorization: Bearer 0' \
+    --output "$metadata" \
+    "$api_url" \
+    || fail "could not fetch bounded update metadata"
+  select_release "$metadata"
+}
+
+download_release() {
+  local package=$1
+  local signature=$2
+
+  /usr/bin/curl -fL \
+    --proto '=https' \
+    --proto-redir '=https' \
+    --tlsv1.2 \
+    --connect-timeout 30 \
+    --max-time 300 \
+    --max-filesize "$package_limit" \
+    --output "$package" \
+    "$release_url" \
+    || fail "could not download the bounded CLI package"
+
+  /usr/bin/curl -fsSL \
+    --proto '=https' \
+    --proto-redir '=https' \
+    --tlsv1.2 \
+    --connect-timeout 15 \
+    --max-time 30 \
+    --max-filesize "$signature_limit" \
+    --output "$signature" \
+    "${release_url}.sig" \
+    || fail "could not download the detached package signature"
+}
+
+case ${1:-} in
+  --select-metadata)
+    (( $# == 2 )) || fail "usage: install-cli --select-metadata FILE"
+    require_tool /usr/bin/jq
+    select_release "$2"
+    printf '%s\t%s\t%s\t%s\n' \
+      "$release_id" "$release_version" "$release_url" "$release_sha256"
+    exit 0
+    ;;
+  --verify-files)
+    (( $# == 4 )) || fail "usage: install-cli --verify-files PACKAGE SIGNATURE SHA256"
+    require_tool /usr/bin/awk
+    require_tool /usr/bin/gpg
+    require_tool /usr/bin/gpgv
+    require_tool /usr/bin/mkdir
+    require_tool /usr/bin/mktemp
+    require_tool /usr/bin/rm
+    require_tool /usr/bin/sha256sum
+    prepare_tmp
+    verify_package "$2" "$3" "$4"
+    printf 'Windscribe CLI package verification passed.\n'
+    exit 0
+    ;;
+  --verify-only|"")
+    ;;
+  *)
+    fail "unknown option: $1"
+    ;;
+esac
+
+require_tool /usr/bin/awk
+require_tool /usr/bin/curl
+require_tool /usr/bin/gpg
+require_tool /usr/bin/gpgv
+require_tool /usr/bin/jq
+require_tool /usr/bin/mkdir
+require_tool /usr/bin/mktemp
+require_tool /usr/bin/rm
+require_tool /usr/bin/sha256sum
+if [[ ${1:-} != --verify-only ]]; then
+  require_tool /usr/bin/pacman
+  require_tool /usr/bin/sudo
+fi
+
+prepare_tmp
+fetch_release
+
+package="$tmp_dir/windscribe-cli.pkg.tar.zst"
+signature="$package.sig"
+printf 'Downloading Windscribe CLI %s...\n' "$release_version"
+download_release "$package" "$signature"
+verify_package "$package" "$signature" "$release_sha256"
+printf 'Verified Windscribe CLI %s (release %s).\n' "$release_version" "$release_id"
+
+if [[ ${1:-} == --verify-only ]]; then
+  exit 0
+fi
+
+/usr/bin/sudo /usr/bin/pacman -U --noconfirm "$package"

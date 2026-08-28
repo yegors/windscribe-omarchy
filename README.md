@@ -14,6 +14,9 @@ omarchy plugin add https://github.com/yegors/windscribe-omarchy.git --enable
 
 Open the Windscribe badge on the bar. If the CLI isn't installed yet, the panel will offer to install it (that step asks for sudo in a floating terminal). Then sign in. Username and password go into Windscribe's own prompt, not into this plugin.
 
+The installer uses `curl`, `jq`, GnuPG, and `pacman`, all included with a
+normal Omarchy installation.
+
 From there: connect, search exits with `/`, star the ones you want at the top. Right click the badge to connect or disconnect without opening the panel. `s` opens settings.
 
 ## Updating
@@ -24,6 +27,29 @@ omarchy-restart-shell
 ```
 
 That second command restarts the Omarchy shell. Plugin updates don't always reload in place, so if you pulled a new version and it still looks like the old one, you probably skipped the restart.
+
+## Remove
+
+```bash
+omarchy plugin remove com.windscribe.vpn
+```
+
+This removes the bar widget. It does not uninstall the Windscribe CLI.
+An active tunnel or Firewall also stays active after the widget is gone. If
+you want normal networking first, run these separately:
+
+```bash
+windscribe-cli status
+windscribe-cli disconnect
+windscribe-cli firewall off
+omarchy plugin remove com.windscribe.vpn
+```
+
+To remove the CLI package too:
+
+```bash
+sudo pacman -R windscribe-cli
+```
 
 ## Keyboard
 
@@ -75,7 +101,13 @@ The plugin:
 - stores no credentials, tokens, or account identity
 - makes no location or telemetry requests of its own
 - passes normal commands as argument arrays rather than shell strings
-- downloads the CLI package into a private mktemp directory, not a shared `/tmp` path
+- asks the official Windscribe update API for the latest supported stable Arch
+  CLI and only accepts its expected HTTPS CDN path
+- verifies both the API-provided SHA-256 and the package's detached signature
+  against the [Windscribe Linux signing key](https://windscribe.com/windscribe_linux_signing_key.pub)
+  bundled with this plugin before asking for sudo
+- downloads that package into a private mktemp directory, not a shared `/tmp` path
+- caps subprocess stdout and stderr before the Omarchy shell collects it
 - validates user-entered locations before they reach the CLI
 - renders CLI output as plain, sanitized text
 - reads tunnel byte counters only while the panel is open
@@ -91,8 +123,8 @@ commands may need interactive input.
 ./scripts/validate.sh
 ```
 
-The validator runs Omarchy plugin validation, `qmllint`, and the Node parser
-tests when Node is available.
+The validator runs Omarchy plugin validation, shell syntax checks, `qmllint`,
+optional `shellcheck`, and the Node tests when Node is available.
 
 ## Acknowledgements
 

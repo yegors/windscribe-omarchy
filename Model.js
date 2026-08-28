@@ -41,21 +41,19 @@ function terminalCommandWithResult(command, resultPath) {
     + "; " + command + "; code=$?; exit \"$code\""
 }
 
-// Fixed install recipe for the official Arch CLI package. The download URL is
-// a redirector (`linux_zst_x64_cli`) that pacman -U would refuse as a
-// filename, so curl writes a real .pkg.tar.zst name. That file lives in a
-// private mktemp directory (0700, created O_EXCL) rather than a shared /tmp
-// path: a planted symlink cannot redirect the write, and another user cannot
-// swap the package between download and `pacman -U`.
-function cliInstallCommand() {
-  return "echo 'Installing Windscribe CLI...'; "
-    + "umask 077; "
-    + "dir=$(mktemp -d) && trap 'rm -rf -- \"$dir\"' EXIT && "
-    + "pkg=\"$dir/windscribe-cli.pkg.tar.zst\" && "
-    + "curl -fL --proto '=https' --tlsv1.2 -o \"$pkg\" "
-    + "https://windscribe.com/install/desktop/linux_zst_x64_cli && "
-    + "[ -f \"$pkg\" ] && [ ! -L \"$pkg\" ] && "
-    + "sudo pacman -U --noconfirm \"$pkg\""
+function outputLimitExitCode() {
+  return 125
+}
+
+// Wrap argv without turning it back into a shell string. The helper caps each
+// output stream before Quickshell can collect it and returns 125 on overflow.
+function boundedCommand(limiterPath, maxBytes, command) {
+  var limit = Math.floor(Number(maxBytes))
+  if (!isFinite(limit) || limit < 1) limit = 65536
+  limit = Math.min(limit, 1048576)
+  var result = [String(limiterPath), String(limit)]
+  for (var i = 0; i < command.length; i++) result.push(String(command[i]))
+  return result
 }
 
 // Locations, cities, and nicknames the user may connect to. The CLI is

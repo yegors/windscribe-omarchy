@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# Run a command while forwarding at most LIMIT bytes from each output stream.
+# Exit 125 if either stream exceeds the limit. The command stays argv-safe,
+# and TERM/INT/HUP are forwarded so Quickshell watchdogs still stop the CLI.
+
+readonly overflow_exit=125
+readonly max_limit=1048576
+
+if (( $# < 2 )) || [[ ! $1 =~ ^[1-9][0-9]*$ ]] || (( $1 > max_limit )); then
+  exit "$overflow_exit"
+fi
+
+readonly limit=$1
+shift
+
+umask 077
+tmp_dir=$(/usr/bin/mktemp -d) || exit "$overflow_exit"
+stdout_pid=""
+stderr_pid=""
+child_pid=""
+
+# shellcheck disable=SC2329 # Invoked by the EXIT trap.
+cleanup() {
+  /usr/bin/rm -rf -- "$tmp_dir"
+}
+
+# shellcheck disable=SC2329 # Invoked by signal traps.
+forward_signal() {
+  local signal=$1
+  local exit_code=$2
+
+  if [[ -n $child_pid ]]; then
+    kill -s "$signal" "$child_pid" 2>/dev/null || true
+    wait "$child_pid" 2>/dev/null || true
+    child_pid=""
+  fi
+  if [[ -n $stdout_pid ]]; then
+    kill -s "$signal" "$stdout_pid" 2>/dev/null || true
+  fi
+  if [[ -n $stderr_pid ]]; then
+    kill -s "$signal" "$stderr_pid" 2>/dev/null || true
+  fi
+  exit "$exit_code"
+}
+
+cap_stream() {
+  local marker=$1
+  local extra
+
+  /usr/bin/dd bs="$limit" count=1 iflag=fullblock status=none || return 1
+  extra=$(/usr/bin/dd bs=1 count=1 status=none | /usr/bin/wc -c) || return 1
+  [[ $extra =~ ^[01]$ ]] || return 1
+  if (( extra > 0 )); then
+    : > "$marker"
+  fi
+}
+
+trap cleanup EXIT
+trap 'forward_signal HUP 129' HUP
+trap 'forward_signal INT 130' INT
+trap 'forward_signal TERM 143' TERM
+
+/usr/bin/mkfifo "$tmp_dir/stdout.pipe" "$tmp_dir/stderr.pipe" || exit "$overflow_exit"
+
+cap_stream "$tmp_dir/stdout.overflow" < "$tmp_dir/stdout.pipe" &
+stdout_pid=$!
+cap_stream "$tmp_dir/stderr.overflow" < "$tmp_dir/stderr.pipe" >&2 &
+stderr_pid=$!
+
+# Keep the command tied to this wrapper even if Quickshell reloads and kills
+# the wrapper with SIGKILL, which cannot be handled by the traps above.
+/usr/bin/setpriv --pdeathsig TERM -- "$@" \
+  > "$tmp_dir/stdout.pipe" 2> "$tmp_dir/stderr.pipe" &
+child_pid=$!
+
+wait "$child_pid"
+command_status=$?
+child_pid=""
+
+wait "$stdout_pid"
+stdout_status=$?
+wait "$stderr_pid"
+stderr_status=$?
+stdout_pid=""
+stderr_pid=""
+
+if (( stdout_status != 0 || stderr_status != 0 )); then
+  exit "$overflow_exit"
+fi
+
+if [[ -e "$tmp_dir/stdout.overflow" || -e "$tmp_dir/stderr.overflow" ]]; then
+  exit "$overflow_exit"
+fi
+
+exit "$command_status"

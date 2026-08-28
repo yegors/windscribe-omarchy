@@ -85,6 +85,13 @@ Item {
   property var recents: []
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/omarchy-windscribe"
   readonly property string statePath: stateDir + "/state.json"
+  // StdioCollector has no native maximum. Every process wired to one runs
+  // through this producer-side limiter before bytes enter omarchy-shell.
+  readonly property string outputLimiterPath: String(Qt.resolvedUrl("scripts/bounded-output"))
+  readonly property string cliInstallerUrl: String(Qt.resolvedUrl("scripts/install-cli"))
+  readonly property int statusOutputLimitBytes: 16 * 1024
+  readonly property int locationsOutputLimitBytes: 256 * 1024
+  readonly property int actionOutputLimitBytes: 64 * 1024
   property bool stateDirReady: false
   property string signInResultPath: ""
   property string updateResultPath: ""
@@ -228,6 +235,26 @@ Item {
     return Model.normalizeProtocol(setting("preferredProtocol", ""))
   }
 
+  function boundedCommand(command, maxBytes) {
+    return Model.boundedCommand(outputLimiterPath, maxBytes, command)
+  }
+
+  function localFilePath(url) {
+    var value = String(url || "")
+    return value.indexOf("file://") === 0
+      ? decodeURIComponent(value.substring(7))
+      : value
+  }
+
+  function outputLimitExceeded(exitCode) {
+    return exitCode === Model.outputLimitExitCode()
+  }
+
+  function reportOutputLimit() {
+    lastError = "Windscribe returned too much data"
+    errorClearTimer.restart()
+  }
+
   function readersFree() {
     return !statusProcess.running && !locationsProcess.running && !portsProcess.running
       && !signInFallbackProcess.running && !updateFallbackProcess.running
@@ -254,7 +281,8 @@ Item {
     _statusAborted = false
     _statusOutput = ""
     _statusError = ""
-    statusProcess.command = ["windscribe-cli", "status"]
+    statusProcess.command = boundedCommand(
+      ["windscribe-cli", "status"], statusOutputLimitBytes)
     statusProcess.running = true
     statusWatchdog.restart()
   }
@@ -269,7 +297,8 @@ Item {
     }
     _locationsAborted = false
     _locationsOutput = ""
-    locationsProcess.command = ["windscribe-cli", "locations"]
+    locationsProcess.command = boundedCommand(
+      ["windscribe-cli", "locations"], locationsOutputLimitBytes)
     locationsProcess.running = true
     locationsWatchdog.restart()
   }
@@ -294,7 +323,8 @@ Item {
     _portsAborted = false
     _portsOutput = ""
     _portsInFlightProtocol = requested
-    portsProcess.command = ["windscribe-cli", "ports", requested]
+    portsProcess.command = boundedCommand(
+      ["windscribe-cli", "ports", requested], statusOutputLimitBytes)
     portsProcess.running = true
     portsWatchdog.restart()
   }
@@ -491,16 +521,15 @@ Item {
     refresh()
   }
 
-  // Official command-line package from windscribe.com.
-  // A floating terminal owns the sudo prompt; this process never touches
-  // privileges. The command is a fixed literal — nothing user-typed crosses
-  // a shell boundary.
+  // The installer discovers Windscribe's latest supported stable Arch CLI,
+  // then verifies its API hash and detached signature against the signing key
+  // bundled with this plugin. A floating terminal owns the sudo prompt.
   function installCli() {
     if (installed || installing || !installSupported) return
     installing = true
     lastError = ""
     Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation",
-      Model.cliInstallCommand()])
+      Model.shellQuote(localFilePath(cliInstallerUrl))])
     installWatch.restart()
   }
 
@@ -600,7 +629,8 @@ Item {
 
   function routeProbe() {
     if (routeProcess.running) return
-    routeProcess.command = ["ip", "-j", "route", "get", "1.1.1.1"]
+    routeProcess.command = boundedCommand(
+      ["ip", "-j", "route", "get", "1.1.1.1"], 4096)
     routeProcess.running = true
   }
 
@@ -610,7 +640,8 @@ Item {
   function trafficSample() {
     if (trafficProcess.running || linkDevice === "") return
     var base = "/sys/class/net/" + linkDevice + "/statistics/"
-    trafficProcess.command = ["cat", base + "rx_bytes", base + "tx_bytes"]
+    trafficProcess.command = boundedCommand(
+      ["cat", base + "rx_bytes", base + "tx_bytes"], 256)
     trafficProcess.running = true
   }
 
@@ -649,7 +680,8 @@ Item {
     }
     _actionKind = _queuedActionKind
     pendingLabel = _queuedActionLabel
-    actionProcess.command = _queuedActionCommand
+    actionProcess.command = boundedCommand(
+      _queuedActionCommand, actionOutputLimitBytes)
     _actionQueued = false
     _queuedActionCommand = []
     _queuedActionKind = ""
@@ -863,12 +895,14 @@ Item {
       if (signInResultProcess.running) return
       if (root.signInResultPath !== "") {
         root._signInResultOutput = ""
-        signInResultProcess.command = ["cat", root.signInResultPath]
+        signInResultProcess.command = root.boundedCommand(
+          ["cat", root.signInResultPath], 64)
         signInResultProcess.running = true
       }
       if (((root._signInLauncherExited && ticks >= 8) || ticks > 30) && ticks % 3 === 0
           && !signInFallbackProcess.running) {
-        signInFallbackProcess.command = ["windscribe-cli", "status"]
+        signInFallbackProcess.command = root.boundedCommand(
+          ["windscribe-cli", "status"], root.statusOutputLimitBytes)
         signInFallbackProcess.running = true
       }
     }
@@ -902,12 +936,14 @@ Item {
       if (updateResultProcess.running) return
       if (root.updateResultPath !== "") {
         root._updateResultOutput = ""
-        updateResultProcess.command = ["cat", root.updateResultPath]
+        updateResultProcess.command = root.boundedCommand(
+          ["cat", root.updateResultPath], 64)
         updateResultProcess.running = true
       }
       if (((root._updateLauncherExited && ticks >= 8) || ticks > 30) && ticks % 3 === 0
           && !updateFallbackProcess.running) {
-        updateFallbackProcess.command = ["windscribe-cli", "status"]
+        updateFallbackProcess.command = root.boundedCommand(
+          ["windscribe-cli", "status"], root.statusOutputLimitBytes)
         updateFallbackProcess.running = true
       }
     }
@@ -933,9 +969,15 @@ Item {
     command: []
     environment: ({ LC_ALL: "C", LANG: "C", LANGUAGE: "en" })
     stdout: StdioCollector { id: signInFallbackStdout; waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       if (!root.signingIn) {
         root.refresh()
+        return
+      }
+      if (root.outputLimitExceeded(exitCode)) {
+        root.finishSignIn(1)
+        root.reportOutputLimit()
         return
       }
       if (exitCode !== 0) {
@@ -958,9 +1000,15 @@ Item {
     command: []
     environment: ({ LC_ALL: "C", LANG: "C", LANGUAGE: "en" })
     stdout: StdioCollector { id: updateFallbackStdout; waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       if (!root.updating) {
         root.refresh()
+        return
+      }
+      if (root.outputLimitExceeded(exitCode)) {
+        root.finishUpdate(1)
+        root.reportOutputLimit()
         return
       }
       if (exitCode !== 0) {
@@ -986,7 +1034,12 @@ Item {
       waitForEnd: true
       onStreamFinished: root._signInResultOutput = text
     }
+    stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
+      if (root.outputLimitExceeded(exitCode)) {
+        root.reportOutputLimit()
+        return
+      }
       if (exitCode !== 0) return
       var result = parseInt(String(root._signInResultOutput || signInResultStdout.text || "1"), 10)
       root.finishSignIn(result)
@@ -1002,7 +1055,12 @@ Item {
       waitForEnd: true
       onStreamFinished: root._updateResultOutput = text
     }
+    stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
+      if (root.outputLimitExceeded(exitCode)) {
+        root.reportOutputLimit()
+        return
+      }
       if (exitCode !== 0) return
       var result = parseInt(String(root._updateResultOutput || updateResultStdout.text || "1"), 10)
       root.finishUpdate(result)
@@ -1020,10 +1078,11 @@ Item {
   Process {
     id: archProcess
     running: true
-    command: ["uname", "-m"]
+    command: root.boundedCommand(["uname", "-m"], 64)
     stdout: StdioCollector { id: archStdout; waitForEnd: true }
-    onExited: function() {
-      root.machine = String(archStdout.text || "").trim()
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      root.machine = exitCode === 0 ? String(archStdout.text || "").trim() : ""
       root.archProbed = true
     }
   }
@@ -1074,6 +1133,7 @@ Item {
     running: false
     command: []
     stdout: StdioCollector { id: routeStdout; waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       if (exitCode !== 0 || !root.connected) return
       var route = Model.parseRoute(String(routeStdout.text || ""))
@@ -1086,6 +1146,7 @@ Item {
     running: false
     command: []
     stdout: StdioCollector { id: trafficStdout; waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       if (exitCode === 0) root.trafficApply(String(trafficStdout.text || ""))
     }
@@ -1116,7 +1177,10 @@ Item {
       }
       var stdout = String(root._statusOutput || statusStdout.text || "")
       var stderr = String(root._statusError || statusStderr.text || "")
-      if (exitCode === 0) {
+      if (root.outputLimitExceeded(exitCode)) {
+        root.connectionState = "Unknown"
+        root.reportOutputLimit()
+      } else if (exitCode === 0) {
         root.applyStatus(stdout)
       } else {
         var output = (stdout + "\n" + stderr).trim()
@@ -1142,13 +1206,16 @@ Item {
       waitForEnd: true
       onStreamFinished: root._locationsOutput = text
     }
+    stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       locationsWatchdog.stop()
       if (root._locationsAborted) {
         root._locationsAborted = false
         return
       }
-      if (exitCode === 0) {
+      if (root.outputLimitExceeded(exitCode)) {
+        root.reportOutputLimit()
+      } else if (exitCode === 0) {
         var parsed = Model.parseLocations(root._locationsOutput || locationsStdout.text || "")
         if (parsed.length > 0) {
           root.locations = parsed
@@ -1174,6 +1241,7 @@ Item {
       waitForEnd: true
       onStreamFinished: root._portsOutput = text
     }
+    stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       portsWatchdog.stop()
       var completedProtocol = root._portsInFlightProtocol
@@ -1188,7 +1256,11 @@ Item {
         portsRetry.restart()
         return
       }
-      if (exitCode === 0) {
+      if (root.outputLimitExceeded(exitCode)) {
+        root.availablePorts = []
+        root.portsProtocol = ""
+        root.reportOutputLimit()
+      } else if (exitCode === 0) {
         root.availablePorts = Model.parsePorts(root._portsOutput || portsStdout.text || "")
         root.portsProtocol = completedProtocol
       } else {
@@ -1234,9 +1306,13 @@ Item {
         root.desiredState = -1
         root._expectDown = false
         desiredTimeout.stop()
-        // The CLI reports errors on stdout, not stderr.
-        root.lastError = Model.elide(stdout || stderr || "Windscribe command failed")
-        errorClearTimer.restart()
+        if (root.outputLimitExceeded(exitCode)) {
+          root.reportOutputLimit()
+        } else {
+          // The CLI reports errors on stdout, not stderr.
+          root.lastError = Model.elide(stdout || stderr || "Windscribe command failed")
+          errorClearTimer.restart()
+        }
       } else {
         root.lastError = ""
         if (kind === "connect") {

@@ -50,6 +50,28 @@ The 0.3.0 home screen used `TunnelInstrument.qml` (retired in 0.5.0):
 - [x] Pass parser/formatter tests and static editor diagnostics
 - [ ] Complete Linux/Omarchy runtime and visual validation
 
+## 0.5.2 — marketplace security hardening
+
+- The first-run installer discovers the newest supported stable Arch CLI from
+  Windscribe's platform-specific update API. Beta and unsupported entries,
+  rollback versions, malformed hashes, and URLs outside the expected CDN path
+  are refused.
+- The repository pins Windscribe's Linux signing key (primary fingerprint
+  `441B49B9D5AFCCAC158444F4E699B988472B0781`, signing subkey
+  `495B477E0F3FA67C20ED94B2BD09F61D249A38FA`). Both the API SHA-256 and
+  the CDN's detached package signature must verify before `sudo pacman` runs.
+- The package remains inside a private `mktemp` directory through verification
+  and installation, and the download itself is capped at 64 MiB.
+- Every subprocess stream read by Quickshell now passes through a producer-side
+  byte limiter. Status, ports, and fallbacks allow 16 KiB per stream; actions
+  allow 64 KiB; the full location list allows 256 KiB. Overflow returns a
+  distinct failure instead of feeding an unbounded `StdioCollector`.
+- The limiter forwards termination signals so existing watchdog and
+  action-cancellation behavior remains intact. `setpriv --pdeathsig TERM`
+  also ties the CLI to the limiter if Quickshell kills the wrapper on reload.
+- Removal docs explicitly warn that uninstalling the widget does not disconnect
+  the tunnel or disable the Firewall, and give the optional cleanup commands.
+
 ## 0.5.0 — the terminal panel
 
 0.5.0 replaces the instrument-card look with the approved terminal design
