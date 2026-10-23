@@ -294,6 +294,24 @@ function parsePorts(raw) {
   return out
 }
 
+// curl -w '%{time_connect}' prints seconds → milliseconds, or NaN.
+// ICMP is not used: Windscribe Firewall often blocks it.
+function parsePingMs(raw) {
+  var line = String(raw || "").trim().split(/\s+/).pop()
+  if (/^\d+(\.\d+)?$/.test(line)) {
+    var seconds = parseFloat(line)
+    if (isFinite(seconds) && seconds >= 0) return seconds * 1000
+  }
+  return NaN
+}
+
+function formatPing(ms) {
+  var value = Number(ms)
+  if (!isFinite(value) || value < 0) return "—"
+  if (value < 10) return value.toFixed(1) + " ms"
+  return Math.round(value) + " ms"
+}
+
 function formatRate(bytesPerSecond) {
   var value = Math.max(0, Number(bytesPerSecond) || 0)
   var units = ["B/s", "KB/s", "MB/s", "GB/s"]

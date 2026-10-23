@@ -353,6 +353,7 @@ Panel {
       if (vpn.tunnelTestPending) parts.push("verifying")
       var proto = Model.protocolStatusShort(vpn.protocol)
       if (proto !== "") parts.push(proto)
+      parts.push(Model.formatPing(vpn.pingMs))
       parts.push(firewallShort())
       return parts.join(" · ")
     }
@@ -1100,7 +1101,7 @@ Panel {
                   model: [
                     { label: "down", kind: "rx" },
                     { label: "up", kind: "tx" },
-                    { label: "data", kind: "sum" }
+                    { label: "ping", kind: "ping" }
                   ]
 
                   Item {
@@ -1138,7 +1139,7 @@ Panel {
                           if (!vpn.connected) return "—"
                           if (statCell.modelData.kind === "rx") return Model.formatRate(vpn.rxRate)
                           if (statCell.modelData.kind === "tx") return Model.formatRate(vpn.txRate)
-                          return Model.formatBytes(vpn.sessionRx + vpn.sessionTx)
+                          return Model.formatPing(vpn.pingMs)
                         }
                         textFormat: Text.PlainText
                         color: vpn.connected ? root.valueFg : root.faintFg

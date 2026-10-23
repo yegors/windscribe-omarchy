@@ -98,6 +98,17 @@ test("parseDataUsage supports finite, unlimited, and localized decimals", () => 
   assert.equal(Model.parseDataUsage("4.00 GiB / Unlimited").unlimited, true)
 })
 
+test("parsePingMs reads curl's TCP-connect seconds and formatPing prints ms", () => {
+  assert.ok(Math.abs(Model.parsePingMs("0.027418") - 27.418) < 0.001)
+  assert.ok(Math.abs(Model.parsePingMs("0.0184") - 18.4) < 0.001)
+  assert.ok(Number.isNaN(Model.parsePingMs("-1")))
+  assert.ok(Number.isNaN(Model.parsePingMs("not-a-number")))
+  assert.ok(Number.isNaN(Model.parsePingMs("")))
+  assert.equal(Model.formatPing(18.4), "18 ms")
+  assert.equal(Model.formatPing(4.2), "4.2 ms")
+  assert.equal(Model.formatPing(NaN), "—")
+})
+
 test("parseRoute accepts only safe interface and address values", () => {
   const valid = Model.parseRoute('[{"dev":"windscribe0","prefsrc":"10.0.0.2"}]')
   assert.equal(valid.dev, "windscribe0")

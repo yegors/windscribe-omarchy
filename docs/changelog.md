@@ -15,6 +15,16 @@ Check these states on Omarchy before a release:
 - themes: light, dark, square corners, rounded corners
 - input: pointer, keyboard, reduced panel height
 
+## 0.5.5 — measured tunnel RTT while the panel is open
+
+The CLI still has no per-city ping, so location rows stay as they are
+(`10g` / `pro` / fastest-location as Windscribe's own pick).
+
+While the panel is open and a tunnel is up, a TCP connect to `1.1.1.1`
+through the tunnel fills the ping stat and the hero line (`wg/443 · 12 ms`).
+ICMP is skipped because Windscribe Firewall often drops it. The probe does
+not run when the panel is closed.
+
 ## 0.5.4 — no FileView, no recents file
 
 Marketplace re-review flagged FileView reading and writing a predictable

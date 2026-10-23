@@ -71,6 +71,8 @@ Item {
   property var txHistory: []
   property real rxRate: 0
   property real txRate: 0
+  property real pingMs: Number.NaN
+  readonly property string pingText: Model.formatPing(pingMs)
   property real sessionRx: 0
   property real sessionTx: 0
   property int uptimeSec: 0
@@ -610,6 +612,7 @@ Item {
     txHistory = []
     rxRate = 0
     txRate = 0
+    pingMs = Number.NaN
     sessionRx = 0
     sessionTx = 0
     uptimeSec = 0
@@ -617,6 +620,17 @@ Item {
     _lastTx = -1
     _lastSampleMs = 0
     _connectedSinceMs = 0
+  }
+
+  function pingSample() {
+    if (pingProcess.running || !connected) return
+    // ICMP is often blocked when Windscribe Firewall is on; TCP connect
+    // time through the tunnel is the latency the panel can actually show.
+    pingProcess.command = boundedCommand(
+      ["curl", "-4", "-sS", "-o", "/dev/null", "-w", "%{time_connect}",
+       "--connect-timeout", "2", "--max-time", "3", "https://1.1.1.1/"],
+      256)
+    pingProcess.running = true
   }
 
   function routeProbe() {
@@ -751,6 +765,15 @@ Item {
     running: root.panelOpen && root.connected && root.linkDevice !== ""
     triggeredOnStart: true
     onTriggered: root.trafficSample()
+  }
+
+  Timer {
+    id: pingTimer
+    interval: 3000
+    repeat: true
+    running: root.panelOpen && root.connected
+    triggeredOnStart: true
+    onTriggered: root.pingSample()
   }
 
   Timer {
@@ -1131,6 +1154,19 @@ Item {
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       if (exitCode === 0) root.trafficApply(String(trafficStdout.text || ""))
+    }
+  }
+
+  Process {
+    id: pingProcess
+    running: false
+    command: []
+    environment: ({ LC_ALL: "C", LANG: "C", LANGUAGE: "en" })
+    stdout: StdioCollector { id: pingStdout; waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      var ms = Model.parsePingMs(String(pingStdout.text || ""))
+      root.pingMs = (exitCode === 0 && isFinite(ms)) ? ms : Number.NaN
     }
   }
 

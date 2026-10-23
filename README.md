@@ -81,8 +81,9 @@ Decisions that shape it:
 - Omarchy's panel, theme, and keyboard conventions win over brand styling.
 - Nothing is shown that can't be measured. No guessed origin, no per-exit
   latency (the CLI doesn't expose ping per city; the fastest-location row is
-  Windscribe's own latency pick), no DNS safety claims, no synthetic privacy
-  score.
+  Windscribe's own latency pick). While the panel is open and connected, the
+  hero line and ping stat show measured tunnel RTT as a TCP connect to
+  `1.1.1.1`. No DNS safety claims, no synthetic privacy score.
 - Copy stays short, and consequences are stated where you act.
 - Packaging details stay out of the product UI.
 
@@ -117,7 +118,9 @@ omarchy-shell "$vpn" status
 The plugin:
 
 - stores no credentials, tokens, or account identity
-- makes no location or telemetry requests of its own
+- makes no location or telemetry requests of its own, except a TCP connect
+  to `1.1.1.1` while the panel is open and a tunnel is up, used only to
+  display current RTT. That probe stops when the panel closes.
 - passes normal commands as argument arrays rather than shell strings
 - asks the official Windscribe update API for the latest supported stable Arch
   CLI and only accepts its expected HTTPS CDN path
@@ -128,7 +131,7 @@ The plugin:
 - caps subprocess stdout and stderr before the Omarchy shell collects it
 - validates user-entered locations before they reach the CLI
 - renders CLI output as plain, sanitized text
-- reads tunnel byte counters only while the panel is open
+- reads tunnel byte counters and measures tunnel RTT only while the panel is open
 - stores short-lived sign-in/update result markers under a `0700` directory
   at `~/.local/state/omarchy-windscribe/` (written with `mktemp` plus `mv -T`,
   read through bounded `cat`). Favourites and the last-city hero label persist

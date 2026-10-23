@@ -145,6 +145,8 @@ BarWidget {
     tooltipText: WindscribeCore.VpnState.markupSafeText(
       "Windscribe · " + WindscribeCore.VpnState.statusText
         + (WindscribeCore.VpnState.city === "" ? "" : " · " + WindscribeCore.VpnState.city)
+        + (WindscribeCore.VpnState.connected && WindscribeCore.VpnState.pingText !== "—"
+             ? " · " + WindscribeCore.VpnState.pingText : "")
         + (WindscribeCore.VpnState.firewallOn ? " · Firewall on" : "")
     )
     iconComponent: Component {
