@@ -300,6 +300,28 @@ test("plugin does not persist recents or reopen state.json", () => {
   assert.equal(fs.existsSync(path.join(__dirname, "..", "scripts", "state-io")), false)
 })
 
+test("search typing keeps the keyboard out of hover focus", () => {
+  const panel = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
+
+  // Hover handlers call these; while the editor is active they must not steal
+  // focus or move the cursor, or the next keystroke goes to the panel keys.
+  for (const name of ["focusHeader", "focusLocation", "focusConnection", "focusRecovery"]) {
+    assert.match(
+      panel,
+      new RegExp(`function ${name}\\([^)]*\\) \\{\\s*if \\(searchField\\.activeFocus\\) return`),
+      `${name} must skip hover focus while search has the keyboard`,
+    )
+  }
+
+  // The editor itself hands the keyboard over where leaving the field is the
+  // intended behaviour.
+  const editor = panel.slice(panel.indexOf("id: searchField"), panel.indexOf("id: searchField") + 2500)
+  assert.match(editor, /onAccepted: \{[\s\S]*?keyCatcher\.forceActiveFocus\(\)[\s\S]*?root\.focusLocation/)
+  assert.match(editor, /Keys\.onDownPressed: function\(event\) \{[\s\S]*?keyCatcher\.forceActiveFocus\(\)/)
+  assert.match(editor, /Keys\.onUpPressed: function\(event\) \{[\s\S]*?keyCatcher\.forceActiveFocus\(\)/)
+  assert.match(editor, /Keys\.onEscapePressed: \{\s*keyCatcher\.forceActiveFocus\(\)/)
+})
+
 test("terminalCommandWithResult writes the marker without following a symlink", () => {
   const os = require("node:os")
   const { execFileSync } = require("node:child_process")
