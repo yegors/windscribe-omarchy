@@ -24,6 +24,7 @@ Panel {
   property string focusSection: "header"
   property bool cursorActive: true
   property var favoriteLocations: []
+  property bool sessionReady: false
   property bool signOutArmed: false
   property int panelOwnerId: 0
   property string ddOpen: ""
@@ -86,7 +87,11 @@ Panel {
     && vpn.desiredState === -1 && !vpn.busy
 
   function open() {
+    // Reaching the panel means the bar has long since injected its settings,
+    // so this is the first safe moment to save the last connected city.
+    sessionReady = true
     root.controller.show()
+    persistLastLocation()
   }
 
   function close() {
@@ -410,8 +415,9 @@ Panel {
   }
 
   function persistLastLocation() {
-    var current = settings && settings.lastLocation !== undefined ? String(settings.lastLocation) : ""
-    if (vpn.lastLocation === "" || current === vpn.lastLocation) return
+    var current = settings && settings.lastLocation !== undefined
+      ? String(settings.lastLocation) : ""
+    if (!Model.shouldPersistLastLocation(current, vpn.lastLocation, sessionReady)) return
     persistSetting("lastLocation", vpn.lastLocation)
   }
 

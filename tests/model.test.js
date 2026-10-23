@@ -300,6 +300,26 @@ test("plugin does not persist recents or reopen state.json", () => {
   assert.equal(fs.existsSync(path.join(__dirname, "..", "scripts", "state-io")), false)
 })
 
+test("last-city persistence waits for a settled settings snapshot", () => {
+  const panel = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
+  const widget = fs.readFileSync(path.join(__dirname, "..", "BarWidget.qml"), "utf8")
+
+  // The panel replaces its whole shell.json entry on write, so the automatic
+  // last-city write must not run before the bar has injected that entry.
+  assert.match(panel, /if \(!Model\.shouldPersistLastLocation\(current, vpn\.lastLocation, sessionReady\)\) return/)
+  assert.match(panel, /sessionReady = true/)
+  // The widget must hand the snapshot to the panel before VpnState reads it,
+  // otherwise the last-city change races the injection.
+  assert.match(widget, /onSettingsChanged: \{\s*injectPanel\(\)\s*syncSettings\(\)\s*\}/)
+
+  assert.equal(Model.shouldPersistLastLocation("", "Toronto", false), false)
+  assert.equal(Model.shouldPersistLastLocation("Tokyo", "Toronto", false), false)
+  assert.equal(Model.shouldPersistLastLocation("Tokyo", "", true), false)
+  assert.equal(Model.shouldPersistLastLocation("Tokyo", "Tokyo", true), false)
+  assert.equal(Model.shouldPersistLastLocation("", "Tokyo", true), true)
+  assert.equal(Model.shouldPersistLastLocation("Tokyo", "Toronto", true), true)
+})
+
 test("terminalCommandWithResult writes the marker without following a symlink", () => {
   const os = require("node:os")
   const { execFileSync } = require("node:child_process")

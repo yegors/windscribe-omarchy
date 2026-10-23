@@ -51,9 +51,13 @@ BarWidget {
   implicitHeight: button.implicitHeight
 
   onBarChanged: injectPanel()
+  // Hand the panel the new snapshot before VpnState reads it: syncing first
+  // lets the last-city label change while the panel still holds the previous
+  // (possibly empty) settings object, and its automatic write would then
+  // replace the whole shell.json entry with that partial snapshot.
   onSettingsChanged: {
-    syncSettings()
     injectPanel()
+    syncSettings()
   }
   Component.onCompleted: syncSettings()
 

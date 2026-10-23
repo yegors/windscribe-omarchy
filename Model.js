@@ -326,3 +326,15 @@ function formatDuration(seconds) {
   if (minutes > 0) return minutes + "m " + (value % 60) + "s"
   return value + "s"
 }
+
+// updateEntryInline replaces the whole widget entry with the settings object
+// it is handed, so an automatic write made before the bar has injected that
+// entry would delete every other key. Only the last-city label is saved
+// without a user action; require a settled panel session and a real change.
+function shouldPersistLastLocation(stored, live, sessionReady) {
+  if (sessionReady !== true) return false
+  var next = String(live === undefined || live === null ? "" : live).trim()
+  if (next === "") return false
+  var current = String(stored === undefined || stored === null ? "" : stored)
+  return current !== next
+}
