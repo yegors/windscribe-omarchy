@@ -1788,7 +1788,11 @@ Panel {
 
     implicitHeight: Style.space(38)
     radius: 0
-    color: block.primary && block.enabled ? root.fg : "transparent"
+    // The primary fill would swallow the shared hover-cursor fill, so with
+    // the cursor the filled button inverts instead: outline and text on the
+    // panel background. Without this the header cursor (reached with Up from
+    // the first exit) was invisible on the connect button.
+    color: block.primary && block.enabled && !block.hasCursor ? root.fg : "transparent"
     border.width: 1
     border.color: {
       if (block.primary && block.enabled) return root.fg
@@ -1807,7 +1811,7 @@ Panel {
       text: block.label
       textFormat: Text.PlainText
       color: block.primary && block.enabled
-        ? root.inverseFg
+        ? (block.hasCursor ? root.fg : root.inverseFg)
         : (block.accented ? root.accent : root.labelFg)
       font.family: root.contentFontFamily
       font.pixelSize: root.fzMeta
