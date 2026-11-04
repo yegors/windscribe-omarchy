@@ -610,11 +610,17 @@ Panel {
       }
       return
     }
+    // The exit list does not wrap: a long list looping from its last row to
+    // the first is disorienting, and the scroll to the top lets a stationary
+    // pointer's hover claim the cursor on the way. Up from the first exit
+    // still reaches the header, matching the way down enters the list.
     if (direction < 0 && locationIndex === 0) {
       focusHeader()
       return
     }
-    locationIndex = (locationIndex + direction + visibleEntries.length) % visibleEntries.length
+    var nextLocation = locationIndex + direction
+    if (nextLocation < 0 || nextLocation >= visibleEntries.length) return
+    locationIndex = nextLocation
     Qt.callLater(function() { locationList.positionViewAtIndex(locationIndex, ListView.Contain) })
   }
 
