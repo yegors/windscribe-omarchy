@@ -33,6 +33,8 @@ test("parseStatus reads a connected tunnel", () => {
       protocol: status.protocol,
       ip: status.ip,
       ipIsVpn: status.ipIsVpn,
+      dataUsage: status.dataUsage,
+      updateAvailable: status.updateAvailable,
       tunnelTestPending: status.tunnelTestPending,
       networkInterference: status.networkInterference,
     },
@@ -45,6 +47,8 @@ test("parseStatus reads a connected tunnel", () => {
       protocol: "WireGuard:443",
       ip: "10.10.10.10",
       ipIsVpn: true,
+      dataUsage: "512.00 MiB / 10.00 GiB",
+      updateAvailable: "2.23.12",
       tunnelTestPending: true,
       networkInterference: true,
     },
@@ -77,6 +81,67 @@ test("parseStatus does not mistake localized output for the English contract", (
   assert.equal(status.loginState, "")
 })
 
+test("parseStatus reads the 2.25 client's status labels", () => {
+  const status = Model.parseStatus([
+    "Login:       Logged in",
+    "Connection:  Disconnected",
+    "Firewall:    Off",
+    "Data usage:  0 bytes / 0 bytes",
+    "Internet:    Available",
+  ].join("\n"))
+
+  assert.equal(status.loginState, "Logged in")
+  assert.equal(status.state, "Disconnected")
+  assert.equal(status.firewall, "Off")
+  assert.equal(status.internet, "available")
+  assert.equal(status.dataUsage, "0 bytes / 0 bytes")
+})
+
+test("parseStatus reads the 2.25 connected form and its markers", () => {
+  const status = Model.parseStatus([
+    "Login:       Logged in",
+    "Connection:  Connected to New York (checking the connection)",
+    "Protocol:    WireGuard:443",
+    "IP:          203.0.113.9 (VPN)",
+    "Firewall:    Always On",
+    "Data usage:  1.24 GiB / 10.00 GiB",
+    "Internet:    Available",
+    "Update:      2.25.8 available",
+  ].join("\n"))
+
+  assert.equal(status.state, "Connected")
+  assert.equal(status.city, "New York")
+  assert.equal(status.tunnelTestPending, true)
+  assert.equal(status.protocol, "WireGuard:443")
+  assert.equal(status.ip, "203.0.113.9")
+  assert.equal(status.ipIsVpn, true)
+  assert.equal(status.updateAvailable, "2.25.8")
+})
+
+test("parseStatus reads the 2.25 interference marker and public IP", () => {
+  const status = Model.parseStatus([
+    "Login:       Logged in",
+    "Connection:  Connected to Zurich (network interference detected)",
+    "IP:          198.51.100.7 (public)",
+  ].join("\n"))
+
+  assert.equal(status.networkInterference, true)
+  assert.equal(status.tunnelTestPending, false)
+  assert.equal(status.city, "Zurich")
+  assert.equal(status.ip, "198.51.100.7")
+  assert.equal(status.ipIsVpn, false)
+})
+
+test("parseStatus reads the 2.25 connecting and error forms", () => {
+  const connecting = Model.parseStatus("Login: Logged in\nConnection: Connecting to Toronto")
+  assert.equal(connecting.state, "Connecting")
+  assert.equal(connecting.city, "Toronto")
+
+  const failure = Model.parseStatus("Login: Logged in\nConnection: Error: handshake failed")
+  assert.equal(failure.state, "Error")
+  assert.equal(failure.stateError, "handshake failed")
+})
+
 test("parseLocations handles flags, pinned IPs, and duplicates", () => {
   const locations = Model.parseLocations([
     "Best Location - Toronto",
@@ -96,6 +161,17 @@ test("parseDataUsage supports finite, unlimited, and localized decimals", () => 
   assert.equal(Model.parseDataUsage("512.00 MiB / 1.00 GiB").fraction, 0.5)
   assert.equal(Model.parseDataUsage("512,00 MiB / 1,00 GiB").fraction, 0.5)
   assert.equal(Model.parseDataUsage("4.00 GiB / Unlimited").unlimited, true)
+})
+
+test("parseDataUsage accepts the 2.25 byte-unit form", () => {
+  assert.equal(Model.parseDataUsage("0 bytes / 0 bytes").fraction, 0)
+})
+
+test("parseDataUsage keeps non-breaking thousands separators", () => {
+  assert.equal(
+    Model.parseDataUsage("1\u00a0234,00 MiB / 2\u00a0468,00 MiB").fraction,
+    0.5
+  )
 })
 
 test("parseRoute accepts only safe interface and address values", () => {
