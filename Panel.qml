@@ -301,13 +301,20 @@ Panel {
 
   function entryCurrent(entry) {
     if (entry.city === "") return false
-    // vpn.city may be the CLI's combined "City Nickname" form; compare
-    // against the resolved city so the current row still highlights.
-    var current = root.currentLocation
-      ? String(root.currentLocation.city)
-      : String(vpn.city || "")
-    return current !== ""
-      && String(entry.city).toLowerCase() === current.toLowerCase()
+    var city = String(entry.city).toLowerCase()
+    var nickname = String(entry.nickname || "").toLowerCase()
+    // vpn.city may be the CLI's combined "City - Nickname" / "City Nickname"
+    // form (2.23-2.24 and 2.25), a bare nickname, or a bare city. Only the
+    // first three name one server; a bare city leaves every exit in it a
+    // candidate, so those all highlight rather than pointing at one we
+    // cannot name. Comparing the city alone highlighted every Seattle row
+    // when only one was connected.
+    var resolved = root.currentLocation
+    if (!resolved) return city === String(vpn.city || "").toLowerCase()
+    if (city !== String(resolved.city).toLowerCase()) return false
+    var currentNickname = String(resolved.nickname || "").toLowerCase()
+    if (currentNickname === "" || String(vpn.city || "").trim().toLowerCase() === city) return true
+    return nickname === currentNickname
   }
 
   function activateEntry(entry) {
