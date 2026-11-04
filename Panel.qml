@@ -1014,6 +1014,38 @@ Panel {
             }
           }
 
+          // ── Unreadable status ───────────────────────────────────────────
+          // The cli has renamed its status labels before, and an unrecognised
+          // contract leaves every section above and below hidden — a panel
+          // with just a header. Say what happened instead of showing nothing.
+          Column {
+            visible: vpn.installed && vpn.statusRead && !vpn.loggedIn
+              && !vpn.loggedOut && !vpn.connected
+            width: parent.width
+            spacing: Style.space(4)
+
+            Text {
+              width: parent.width
+              text: "windscribe-cli status not recognised"
+              textFormat: Text.PlainText
+              color: root.rowFg
+              font.family: root.contentFontFamily
+              font.pixelSize: root.fzRow
+              font.bold: true
+              wrapMode: Text.WordWrap
+            }
+
+            Text {
+              width: parent.width
+              text: "the plugin may be out of date for this cli; compare with windscribe-cli status"
+              textFormat: Text.PlainText
+              color: root.dimFg
+              font.family: root.contentFontFamily
+              font.pixelSize: root.fzSmall
+              wrapMode: Text.WordWrap
+            }
+          }
+
           // ── Hero: destination, tunnel line, the one big action ──────────
           Column {
             visible: vpn.installed && (vpn.loggedIn || vpn.connected) && root.tab === "locations"
