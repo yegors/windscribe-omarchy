@@ -92,6 +92,61 @@ test("parseLocations handles flags, pinned IPs, and duplicates", () => {
   assert.equal(locations[2].disabled, true)
 })
 
+test("groupLocationRows inserts one header per group change", () => {
+  const rows = Model.groupLocationRows([
+    { kind: "best", group: "best" },
+    { kind: "location", city: "Zurich", group: "favourites" },
+    { kind: "location", city: "Bern", group: "favourites" },
+    { kind: "location", city: "Atlanta", group: "US Central" },
+    { kind: "location", city: "Dallas", group: "US Central" },
+    { kind: "location", city: "Boston", group: "US East" },
+  ])
+
+  // The model runs in a vm context, so its arrays are a different realm's
+  // Array; Array.from copies them into this one for deep comparisons.
+  assert.deepEqual(Array.from(rows, (row) => row.kind), [
+    "entry", "header", "entry", "entry",
+    "header", "entry", "entry", "header", "entry",
+  ])
+  assert.deepEqual(
+    Array.from(rows.filter((row) => row.kind === "header"), (row) => row.label),
+    ["favourites", "us-central", "us-east"]
+  )
+  assert.deepEqual(
+    Array.from(rows.filter((row) => row.kind === "entry"), (row) => row.entryIndex),
+    [0, 1, 2, 3, 4, 5]
+  )
+})
+
+test("groupLocationRows keeps entries without a group headerless", () => {
+  const rows = Model.groupLocationRows([
+    { kind: "best", group: "best" },
+    { kind: "custom", group: "" },
+    { kind: "location", city: "", group: "" },
+  ])
+
+  assert.equal(rows.length, 3)
+  assert.equal(Array.from(rows, (row) => row.kind).join(), "entry,entry,entry")
+})
+
+test("groupLocationRows renders flat when grouping is off", () => {
+  const entries = [
+    { kind: "location", city: "Zurich", group: "favourites" },
+    { kind: "location", city: "Atlanta", group: "US Central" },
+    { kind: "location", city: "Boston", group: "US East" },
+  ]
+
+  const rows = Model.groupLocationRows(entries, false)
+  assert.equal(rows.length, 3)
+  assert.equal(Array.from(rows, (row) => row.kind).join(), "entry,entry,entry")
+  assert.equal(rows[0].entry.city, "Zurich")
+})
+
+test("groupLocationRows tolerates sparse and null entries", () => {
+  const rows = Model.groupLocationRows([null, {}, { kind: "location", group: "US East" }])
+  assert.equal(Array.from(rows, (row) => row.kind).join(), "entry,entry,header,entry")
+})
+
 test("parseDataUsage supports finite, unlimited, and localized decimals", () => {
   assert.equal(Model.parseDataUsage("512.00 MiB / 1.00 GiB").fraction, 0.5)
   assert.equal(Model.parseDataUsage("512,00 MiB / 1,00 GiB").fraction, 0.5)
@@ -298,6 +353,26 @@ test("plugin does not persist recents or reopen state.json", () => {
   assert.match(vpnState, /property string lastLocation/)
   assert.match(panel, /persistSetting\("lastLocation"/)
   assert.equal(fs.existsSync(path.join(__dirname, "..", "scripts", "state-io")), false)
+})
+
+test("last-city persistence waits for a settled settings snapshot", () => {
+  const panel = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
+  const widget = fs.readFileSync(path.join(__dirname, "..", "BarWidget.qml"), "utf8")
+
+  // The panel replaces its whole shell.json entry on write, so the automatic
+  // last-city write must not run before the bar has injected that entry.
+  assert.match(panel, /if \(!Model\.shouldPersistLastLocation\(current, vpn\.lastLocation, sessionReady\)\) return/)
+  assert.match(panel, /sessionReady = true/)
+  // The widget must hand the snapshot to the panel before VpnState reads it,
+  // otherwise the last-city change races the injection.
+  assert.match(widget, /onSettingsChanged: \{\s*injectPanel\(\)\s*syncSettings\(\)\s*\}/)
+
+  assert.equal(Model.shouldPersistLastLocation("", "Toronto", false), false)
+  assert.equal(Model.shouldPersistLastLocation("Tokyo", "Toronto", false), false)
+  assert.equal(Model.shouldPersistLastLocation("Tokyo", "", true), false)
+  assert.equal(Model.shouldPersistLastLocation("Tokyo", "Tokyo", true), false)
+  assert.equal(Model.shouldPersistLastLocation("", "Tokyo", true), true)
+  assert.equal(Model.shouldPersistLastLocation("Tokyo", "Toronto", true), true)
 })
 
 test("terminalCommandWithResult writes the marker without following a symlink", () => {
