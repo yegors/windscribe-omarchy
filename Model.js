@@ -172,6 +172,30 @@ function parseLocations(raw) {
   return out
 }
 
+// Display rows for the exit list. Entries arrive already ordered (best row,
+// pinned favourites, then the CLI's region-sorted locations) and carry a
+// `group` tag: "best" for the unheaded first row, "favourites" for the pinned
+// rows, the region name for the rest. One header is inserted wherever that
+// tag changes; entries with no group never open one. `grouped` false (the
+// search result list) keeps every row flat. Header labels are the panel's
+// lowercase slug form; entries are returned untouched plus their index, so
+// cursor arithmetic stays against the entry list, never the display rows.
+function groupLocationRows(entries, grouped) {
+  var flat = grouped === false
+  var rows = []
+  var current = ""
+  for (var i = 0; i < entries.length; i++) {
+    var entry = entries[i] || {}
+    var group = String(entry.group || "")
+    if (!flat && group !== "" && group !== "best" && group !== current) {
+      rows.push({ kind: "header", label: group === "favourites" ? "favourites" : slugify(group) })
+      current = group
+    }
+    rows.push({ kind: "entry", entry: entry, entryIndex: i })
+  }
+  return rows
+}
+
 // One size like "1.24 GiB" (Qt-localized: binary i-units, possible thousands
 // separators) to bytes, or NaN.
 function parseSize(text) {
