@@ -1,6 +1,6 @@
 // Pure parsing and formatting helpers for windscribe-cli output.
 // Output formats per https://github.com/Windscribe/Desktop-App
-// (src/windscribe-cli/strings.cpp), v2.23.x.
+// (src/windscribe-cli/{strings,backendcommander}.cpp), v2.24.13 and v2.25.8.
 
 function markupSafe(raw) {
   return String(raw || "")
@@ -156,7 +156,12 @@ function parseStatus(raw) {
     }
     // 2.24 said "Connected: City"; 2.25 says "Connected to City".
     var parts = value.match(/^(Connected|Connecting|Disconnecting|Disconnected|Error)(?:\s*(?::|\bto\b)\s*(.*))?$/i)
-    if (parts) {
+    // Both releases append a sentence when the WireGuard key limit causes
+    // a disconnect. Keep the real state and expose the CLI's recovery advice.
+    if (/^Disconnected due to\s+\S/i.test(value)) {
+      result.state = "Disconnected"
+      result.stateError = value
+    } else if (parts) {
       result.state = parts[1].charAt(0).toUpperCase() + parts[1].slice(1).toLowerCase()
       var detail = (parts[2] || "").trim()
       if (result.state === "Error") result.stateError = detail

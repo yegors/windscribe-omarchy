@@ -30,7 +30,11 @@ function showsFallback(raw, options = {}) {
 
 test("recognized login and connection states do not claim the CLI is outdated", () => {
   for (const label of ["Login state", "Login"]) {
-    for (const state of ["Logged in", "Logged out", "Logging in", "Error: Incorrect username, password, or 2FA code"]) {
+    for (const state of [
+      "Logged in", "Logged out", "Logging in",
+      "Error: Incorrect username, password, or 2FA code",
+      "Unknown error", "Could not log in. Please try again.",
+    ]) {
       const output = `${label}: ${state}`
       assert.equal(showsFallback(output), false, output)
     }

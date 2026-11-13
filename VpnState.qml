@@ -365,7 +365,7 @@ Item {
     updateAvailable = s.updateAvailable
     tunnelTestPending = s.tunnelTestPending
     networkInterference = s.networkInterference
-    if (s.state === "Error" && s.stateError !== "" && lastError === "") {
+    if (s.stateError !== "" && lastError === "") {
       lastError = Model.elide(s.stateError)
       errorClearTimer.restart()
     }
