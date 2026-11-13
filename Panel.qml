@@ -645,11 +645,17 @@ Panel {
       }
       return
     }
+    // The exit list does not wrap: a long list looping from its last row to
+    // the first is disorienting, and the scroll to the top lets a stationary
+    // pointer's hover claim the cursor on the way. Up from the first exit
+    // still reaches the header, matching the way down enters the list.
     if (direction < 0 && locationIndex === 0) {
       focusHeader()
       return
     }
-    locationIndex = (locationIndex + direction + visibleEntries.length) % visibleEntries.length
+    var nextLocation = locationIndex + direction
+    if (nextLocation < 0 || nextLocation >= visibleEntries.length) return
+    locationIndex = nextLocation
     Qt.callLater(function() { locationList.positionViewAtIndex(displayIndexFor(locationIndex), ListView.Contain) })
   }
 
@@ -1848,7 +1854,11 @@ Panel {
 
     implicitHeight: Style.space(38)
     radius: 0
-    color: block.primary && block.enabled ? root.fg : "transparent"
+    // The primary fill would swallow the shared hover-cursor fill, so with
+    // the cursor the filled button inverts instead: outline and text on the
+    // panel background. Without this the header cursor (reached with Up from
+    // the first exit) was invisible on the connect button.
+    color: block.primary && block.enabled && !block.hasCursor ? root.fg : "transparent"
     border.width: 1
     border.color: {
       if (block.primary && block.enabled) return root.fg
@@ -1867,7 +1877,7 @@ Panel {
       text: block.label
       textFormat: Text.PlainText
       color: block.primary && block.enabled
-        ? root.inverseFg
+        ? (block.hasCursor ? root.fg : root.inverseFg)
         : (block.accented ? root.accent : root.labelFg)
       font.family: root.contentFontFamily
       font.pixelSize: root.fzMeta
