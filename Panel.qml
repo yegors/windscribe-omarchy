@@ -464,6 +464,7 @@ Panel {
   }
 
   function focusHeader() {
+    if (searchField.activeFocus) return
     cursorActive = true
     focusSection = "header"
     keyCatcher.forceActiveFocus()
@@ -494,7 +495,11 @@ Panel {
     return null
   }
 
+  // Hover affordances call the focus* helpers as the pointer crosses a row.
+  // While the search field owns the keyboard they must not pull focus, or move
+  // the cursor, out from under the query being typed.
   function focusLocation(index) {
+    if (searchField.activeFocus) return
     cursorActive = true
     focusSection = "locations"
     locationIndex = Math.max(0, Math.min(Number(index), Math.max(0, visibleEntries.length - 1)))
@@ -506,6 +511,7 @@ Panel {
   }
 
   function focusConnection(index) {
+    if (searchField.activeFocus) return
     cursorActive = true
     focusSection = "connection"
     connectionIndex = Math.max(0, Math.min(Number(index), Math.max(0, connectionEntries.length - 1)))
@@ -517,6 +523,7 @@ Panel {
   }
 
   function focusRecovery(index) {
+    if (searchField.activeFocus) return
     cursorActive = true
     focusSection = "recovery"
     recoveryIndex = Math.max(0, Math.min(Number(index), 1))
@@ -1310,21 +1317,25 @@ Panel {
               onAccepted: {
                 if (root.visibleEntries.length > 0)
                   root.activateEntry(root.visibleEntries[root.locationIndex])
+                keyCatcher.forceActiveFocus()
                 root.focusLocation(root.locationIndex)
               }
               Keys.onDownPressed: function(event) {
                 // The first Down enters the list on the current match; only
                 // later ones advance it.
                 var step = root.focusSection === "locations" ? 1 : 0
+                keyCatcher.forceActiveFocus()
                 root.focusLocation(Math.min(root.locationIndex + step,
                   Math.max(0, root.visibleEntries.length - 1)))
                 event.accepted = true
               }
               Keys.onUpPressed: function(event) {
+                keyCatcher.forceActiveFocus()
                 root.focusLocation(Math.max(0, root.locationIndex - 1))
                 event.accepted = true
               }
               Keys.onEscapePressed: {
+                keyCatcher.forceActiveFocus()
                 text = ""
                 root.focusHeader()
               }
