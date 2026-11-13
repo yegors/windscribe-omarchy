@@ -1043,12 +1043,12 @@ Panel {
           }
 
           // ── Unreadable status ───────────────────────────────────────────
-          // The cli has renamed its status labels before, and an unrecognised
-          // contract leaves every section above and below hidden — a panel
-          // with just a header. Say what happened instead of showing nothing.
+          // Warn only when neither login nor connection state was read.
+          // Logging in and login errors are valid CLI responses, even though
+          // they are neither loggedIn nor loggedOut.
           Column {
-            visible: vpn.installed && vpn.statusRead && !vpn.loggedIn
-              && !vpn.loggedOut && !vpn.connected
+            visible: vpn.installed && vpn.statusRead && vpn.loginState === ""
+              && vpn.connectionState === "Unknown"
             width: parent.width
             spacing: Style.space(4)
 
