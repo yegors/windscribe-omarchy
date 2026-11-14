@@ -129,6 +129,9 @@ Item {
 
   readonly property bool loggedIn: loginState === "Logged in"
   readonly property bool loggedOut: loginState === "Logged out"
+  // True once at least one status read has been applied. Lets the panel tell
+  // "still checking" from "the cli answered with nothing it recognises".
+  readonly property bool statusRead: _statusInitialized
   readonly property bool connected: connectionState === "Connected"
   readonly property bool transitional: connectionState === "Connecting"
     || connectionState === "Disconnecting"
@@ -362,7 +365,7 @@ Item {
     updateAvailable = s.updateAvailable
     tunnelTestPending = s.tunnelTestPending
     networkInterference = s.networkInterference
-    if (s.state === "Error" && s.stateError !== "" && lastError === "") {
+    if (s.stateError !== "" && lastError === "") {
       lastError = Model.elide(s.stateError)
       errorClearTimer.restart()
     }

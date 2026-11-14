@@ -1,6 +1,6 @@
 // Pure parsing and formatting helpers for windscribe-cli output.
 // Output formats per https://github.com/Windscribe/Desktop-App
-// (src/windscribe-cli/strings.cpp), v2.23.x.
+// (src/windscribe-cli/{strings,backendcommander}.cpp), v2.24.13 and v2.25.8.
 
 function markupSafe(raw) {
   return String(raw || "")
@@ -68,23 +68,37 @@ function field(text, name) {
   return match ? match[1].trim() : ""
 }
 
-// windscribe-cli status prints, in order (lines conditionally omitted):
-//   Internet connectivity: available|unavailable
-//   Login state: Logged out|Logging in|Logged in|Error: <reason>
-//   Firewall state: On|Off|Always On
-//   Connect state: Connected: <City>|Connecting: <City>|Disconnecting|Disconnected|Error: <reason>
-//   Protocol: <Name>:<port>
-//   VPN IP: <ip>  -or-  Public IP: <ip>
-//   Data usage: <used> / <total|Unlimited>
-//   Update available: <version>
-// A leading "*" marks a pending tunnel test; a "[Network interference]"
-// suffix marks a failed one.
+// The first label that appears. The status contract gained new labels in the
+// 2.25 client; trying both keeps an older pinned CLI readable.
+function firstField(text, names) {
+  for (var i = 0; i < names.length; i++) {
+    var value = field(text, names[i])
+    if (value !== "") return value
+  }
+  return ""
+}
+
+// windscribe-cli status prints one "Label: value" line per item. The 2.25
+// client renamed the labels and reworded the connection detail; both forms
+// are read so the plugin works with a pinned older CLI too.
+//   2.23-2.24                          2.25+
+//   Internet connectivity: available    Internet: Available
+//   Login state: Logged in              Login: Logged in
+//   Firewall state: Off                 Firewall: Off
+//   Connect state: Connected: <City>    Connection: Connected to <City>
+//   Protocol: <Name>:<port>             Protocol: <Name>:<port>
+//   VPN IP: <ip> / Public IP: <ip>      IP: <ip> (VPN) / <ip> (public)
+//   Data usage: <used> / <total>        Data usage: <used> / <limit>
+//   Update available: <version>         Update: <version> available
+// A leading "*" (2.24) or a "(checking the connection)" suffix (2.25) marks a
+// pending tunnel test; "[Network interference]" (2.24) or "(network
+// interference detected)" (2.25) marks a failed one.
 function parseStatus(raw) {
   var text = String(raw || "")
   var result = {
-    internet: field(text, "Internet connectivity"),
-    loginState: field(text, "Login state"),
-    firewall: field(text, "Firewall state"),
+    internet: firstField(text, ["Internet connectivity", "Internet"]).toLowerCase(),
+    loginState: firstField(text, ["Login state", "Login"]),
+    firewall: firstField(text, ["Firewall state", "Firewall"]),
     state: "Unknown",
     city: "",
     stateError: "",
@@ -92,31 +106,62 @@ function parseStatus(raw) {
     ip: "",
     ipIsVpn: false,
     dataUsage: field(text, "Data usage"),
-    updateAvailable: field(text, "Update available"),
+    updateAvailable: firstField(text, ["Update available", "Update"])
+      .replace(/\s+available$/i, ""),
     tunnelTestPending: false,
     networkInterference: false
   }
 
-  var vpnIp = field(text, "VPN IP")
-  var publicIp = field(text, "Public IP")
-  if (vpnIp !== "") {
-    result.ip = vpnIp
-    result.ipIsVpn = true
-  } else if (publicIp !== "") {
-    result.ip = publicIp
+  // 2.25 folds both addresses into one labelled line and appends the mode.
+  var ipMode = field(text, "IP").match(/^(.+?)\s*\((VPN|public)\)$/i)
+  if (ipMode) {
+    result.ip = ipMode[1].trim()
+    result.ipIsVpn = ipMode[2].toLowerCase() === "vpn"
+  } else {
+    var vpnIp = field(text, "VPN IP")
+    var publicIp = field(text, "Public IP")
+    if (vpnIp !== "") {
+      result.ip = vpnIp
+      result.ipIsVpn = true
+    } else if (publicIp !== "") {
+      result.ip = publicIp
+    }
   }
 
-  var connectLine = text.match(/^\s*(\*?)\s*Connect state\s*:\s*(.+)$/im)
+  var connectLine = text.match(/^\s*(\*?)\s*(?:Connect state|Connection)\s*:\s*(.+)$/im)
   if (connectLine) {
     var value = connectLine[2].trim()
     result.tunnelTestPending = connectLine[1] === "*" || value.charAt(0) === "*"
     if (value.charAt(0) === "*") value = value.substring(1).trim()
-    if (/\[Network interference\]\s*$/i.test(value)) {
-      result.networkInterference = true
-      value = value.replace(/\s*\[Network interference\]\s*$/i, "").trim()
+    var stripped = true
+    while (stripped) {
+      stripped = false
+      var next = value
+        .replace(/\s*\(checking the connection\)\s*$/i, function() {
+          result.tunnelTestPending = true
+          return ""
+        })
+        .replace(/\s*\(network interference detected\)\s*$/i, function() {
+          result.networkInterference = true
+          return ""
+        })
+        .replace(/\s*\[Network interference\]\s*$/i, function() {
+          result.networkInterference = true
+          return ""
+        })
+      if (next !== value) {
+        value = next.trim()
+        stripped = true
+      }
     }
-    var parts = value.match(/^(Connected|Connecting|Disconnecting|Disconnected|Error)(?:\s*:\s*(.*))?$/i)
-    if (parts) {
+    // 2.24 said "Connected: City"; 2.25 says "Connected to City".
+    var parts = value.match(/^(Connected|Connecting|Disconnecting|Disconnected|Error)(?:\s*(?::|\bto\b)\s*(.*))?$/i)
+    // Both releases append a sentence when the WireGuard key limit causes
+    // a disconnect. Keep the real state and expose the CLI's recovery advice.
+    if (/^Disconnected due to\s+\S/i.test(value)) {
+      result.state = "Disconnected"
+      result.stateError = value
+    } else if (parts) {
       result.state = parts[1].charAt(0).toUpperCase() + parts[1].slice(1).toLowerCase()
       var detail = (parts[2] || "").trim()
       if (result.state === "Error") result.stateError = detail
@@ -197,9 +242,9 @@ function groupLocationRows(entries, grouped) {
 }
 
 // One size like "1.24 GiB" (Qt-localized: binary i-units, possible thousands
-// separators) to bytes, or NaN.
+// separators) or "0 bytes" (the 2.25 CLI's byte form) to bytes, or NaN.
 function parseSize(text) {
-  var match = String(text || "").trim().match(/^([\d.,  ]+)\s*([KMGTP]?i?B)$/i)
+  var match = String(text || "").trim().match(/^([\d.,  ]+)\s*([KMGTP]?i?B|bytes?)$/i)
   if (!match) return NaN
   var num = match[1].replace(/[  ]/g, "")
   if (num.indexOf(",") !== -1 && num.indexOf(".") !== -1) num = num.replace(/,/g, "")
@@ -207,6 +252,7 @@ function parseSize(text) {
   var value = parseFloat(num)
   if (!isFinite(value)) return NaN
   var unit = match[2].toUpperCase()
+  if (unit === "BYTE" || unit === "BYTES") unit = "B"
   var powers = { "B": 0, "KB": 1, "KIB": 1, "MB": 2, "MIB": 2, "GB": 3, "GIB": 3, "TB": 4, "TIB": 4, "PB": 5, "PIB": 5 }
   var p = powers[unit]
   if (p === undefined) return NaN
